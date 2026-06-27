@@ -241,7 +241,7 @@ h3 {
   position: fixed;
   left: 0;
   right: 0;
-  bottom: 8px;
+  bottom: 15px;
   text-align: center;
   font-size: 11px;
   letter-spacing: 0.02em;
@@ -336,7 +336,7 @@ h3 {
 }
 .token {
   font-family: "Archivo", sans-serif;
-  font-size: 21px;
+  font-size: 16px;
   font-weight: 700;
   fill: #2c2418;
 }
@@ -344,10 +344,10 @@ h3 {
   fill: #b32414;
 }
 .token-dots {
-  font-size: 11px;
+  font-size: 8px;
   font-weight: 700;
   fill: #6a5f48;
-  letter-spacing: 1px;
+  letter-spacing: 0.5px;
 }
 .token-dots.hot {
   fill: #b32414;
@@ -356,6 +356,12 @@ h3 {
   fill: rgba(15, 12, 8, 0.72);
   stroke: #f3ead2;
   stroke-width: 1.5;
+}
+.robber-piece {
+  fill: #ece3cf;
+  stroke: #241c11;
+  stroke-width: 0.6;
+  stroke-linejoin: round;
 }
 
 /* Ports */
@@ -636,6 +642,63 @@ h3 {
   min-width: 28px;
   text-align: center;
 }
+
+/* Clickable roll-the-dice prompt */
+.dice-roll {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: none;
+  border: none;
+  padding: 4px;
+  cursor: pointer;
+}
+.dice-roll:hover .die {
+  transform: translateY(-2px) rotate(-4deg);
+}
+.dice-roll:hover .die:nth-child(2) {
+  transform: translateY(-2px) rotate(4deg);
+}
+.dice-roll:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+.dice-roll:disabled:hover .die {
+  transform: none;
+}
+.dice-roll-hint {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+/* Help button (rules of Catan) */
+.help-button {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 6;
+  width: 38px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 19px;
+  font-weight: 800;
+  text-decoration: none;
+  color: #fff8ea;
+  background: linear-gradient(180deg, #cf9a3a, var(--brass-deep));
+  border: 1px solid var(--brass-deep);
+  border-radius: 50%;
+  box-shadow: 0 8px 20px -8px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  transition: transform 0.12s ease, filter 0.12s ease;
+}
+.help-button:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.07);
+}
 .dice-total.seven {
   color: #b32414;
 }
@@ -814,12 +877,11 @@ button:disabled {
   border-bottom: none;
 }
 .log-dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
   flex: 0 0 auto;
   transform: translateY(2px);
-  box-shadow: 0 0 0 2px #fffaf0;
 }
 .log-text {
   color: var(--ink);

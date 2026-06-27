@@ -254,6 +254,17 @@ export default function App() {
           GitHub
         </a>
       </footer>
+
+      <a
+        className="help-button"
+        href="https://www.catan.com/understand-catan/game-rules"
+        target="_blank"
+        rel="noopener noreferrer"
+        title="Rules of Catan"
+        aria-label="Rules of Catan"
+      >
+        ?
+      </a>
     </div>
   );
 }

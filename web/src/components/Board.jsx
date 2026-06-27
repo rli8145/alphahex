@@ -5,6 +5,18 @@ import { HEX_META, PLAYER_COLORS, RESOURCE_META } from "../format.js";
 const NUMBER_DOTS = { 2: 1, 3: 2, 4: 3, 5: 4, 6: 5, 8: 5, 9: 4, 10: 3, 11: 2, 12: 1 };
 const SIZE = 56; // matches layout scale
 
+// The robber drawn as an SVG pawn (the emoji doesn't render on Windows).
+function Robber({ cx, cy, size }) {
+  const s = size / 56;
+  return (
+    <g transform={`translate(${cx} ${cy}) scale(${s})`} className="robber-piece" pointerEvents="none">
+      <circle cx="0" cy="-10.5" r="5.5" />
+      <path d="M -4 -5.5 C -8 1 -9.5 8 -9.5 10.5 L 9.5 10.5 C 9.5 8 8 1 4 -5.5 C 2 -3 -2 -3 -4 -5.5 Z" />
+      <rect x="-10" y="10" width="20" height="4.6" rx="2.3" />
+    </g>
+  );
+}
+
 function hexPoints(cx, cy, size) {
   const pts = [];
   for (let k = 0; k < 6; k++) {
@@ -155,10 +167,10 @@ export default function Board({
             {hex.number != null && (
               <g filter="url(#tokenShadow)">
                 <circle cx={hex.x} cy={hex.y} r={SIZE * 0.3} className="token-disc" />
-                <text x={hex.x} y={hex.y - 3} textAnchor="middle" dominantBaseline="middle" className={hot ? "token hot" : "token"}>
+                <text x={hex.x} y={hex.y - 2.5} textAnchor="middle" dominantBaseline="middle" className={hot ? "token hot" : "token"}>
                   {hex.number}
                 </text>
-                <text x={hex.x} y={hex.y + SIZE * 0.17} textAnchor="middle" dominantBaseline="middle" className={hot ? "token-dots hot" : "token-dots"}>
+                <text x={hex.x} y={hex.y + SIZE * 0.15} textAnchor="middle" dominantBaseline="middle" className={hot ? "token-dots hot" : "token-dots"}>
                   {"•".repeat(NUMBER_DOTS[hex.number] ?? 0)}
                 </text>
               </g>
@@ -166,9 +178,7 @@ export default function Board({
             {isRobber && (
               <g>
                 <circle cx={hex.x} cy={hex.y} r={SIZE * 0.34} className="robber-ring" />
-                <text x={hex.x} y={hex.y + 1} textAnchor="middle" dominantBaseline="middle" fontSize={SIZE * 0.42}>
-                  🥷
-                </text>
+                <Robber cx={hex.x} cy={hex.y} size={SIZE} />
               </g>
             )}
           </g>

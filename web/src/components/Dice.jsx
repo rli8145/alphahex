@@ -35,15 +35,24 @@ const rand6 = () => 1 + Math.floor(Math.random() * 6);
 const ROLL_TICK_MS = 70;
 const ROLL_TICKS = 11;
 
-export default function Dice({ total, salt = 0 }) {
-  const [a, b] = total == null ? [1, 1] : facePair(total, salt);
+// Always-visible dice. With no real roll yet they default to 6/6. When a roll
+// comes in they tumble and settle on the engine's total. Pass `onClick` to make
+// them the clickable roll control.
+export default function Dice({ total, salt = 0, onClick, hint, disabled = false }) {
+  const isReal = total != null;
+  const display = isReal ? total : 12; // default faces: 6 + 6
+  const [a, b] = facePair(display, salt);
   const [faces, setFaces] = useState([a, b]);
   const [rolling, setRolling] = useState(false);
 
-  // On each new roll (total/salt change) tumble through random faces, then
+  // On each new real roll (total/salt change) tumble through random faces, then
   // settle on the reconstructed pair that sums to the engine's total.
   useEffect(() => {
-    if (total == null) return;
+    if (!isReal) {
+      setFaces([a, b]);
+      setRolling(false);
+      return;
+    }
     setRolling(true);
     let tick = 0;
     const id = setInterval(() => {
@@ -57,14 +66,31 @@ export default function Dice({ total, salt = 0 }) {
       }
     }, ROLL_TICK_MS);
     return () => clearInterval(id);
-  }, [total, salt, a, b]);
+  }, [total, salt, a, b, isReal]);
 
-  if (total == null) return null;
-  return (
-    <div className={`dice${rolling ? " is-rolling" : ""}`}>
+  const inner = (
+    <>
       <Die value={faces[0]} rolling={rolling} />
       <Die value={faces[1]} rolling={rolling} />
-      <span className={`dice-total${total === 7 ? " seven" : ""}`}>{rolling ? "·" : total}</span>
-    </div>
+      {isReal && (
+        <span className={`dice-total${total === 7 ? " seven" : ""}`}>{rolling ? "·" : total}</span>
+      )}
+    </>
   );
+
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        className={`dice dice-roll${rolling ? " is-rolling" : ""}`}
+        onClick={onClick}
+        disabled={disabled}
+        aria-label="Roll the dice"
+      >
+        {inner}
+        {hint && !disabled && <span className="dice-roll-hint">{hint}</span>}
+      </button>
+    );
+  }
+  return <div className={`dice${rolling ? " is-rolling" : ""}`}>{inner}</div>;
 }
