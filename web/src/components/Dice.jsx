@@ -78,17 +78,19 @@ export default function Dice({ total, salt = 0, onClick, hint, disabled = false 
     </>
   );
 
-  if (onClick) {
+  // With a hint, render as the roll control — always visible, greyed (disabled)
+  // when there's no roll to make.
+  if (hint != null) {
     return (
       <button
         type="button"
         className={`dice dice-roll${rolling ? " is-rolling" : ""}`}
         onClick={onClick}
-        disabled={disabled}
+        disabled={disabled || !onClick}
         aria-label="Roll the dice"
       >
         {inner}
-        {hint && !disabled && <span className="dice-roll-hint">{hint}</span>}
+        <span className="dice-roll-hint">{hint}</span>
       </button>
     );
   }

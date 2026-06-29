@@ -61,6 +61,7 @@ export default function Board({
   state,
   highlight = { nodes: new Set(), cities: new Set(), edges: new Set(), hexes: new Set() },
   pendingMark = null,
+  selectedEdgeId = null,
   pendingPrompt = null,
   onConfirm,
   onCancel,
@@ -191,6 +192,7 @@ export default function Board({
         const clickable = highlight.edges.has(edge.id);
         if (owner == null && !clickable) return null;
         const isPending = pendingMark?.kind === "edge" && pendingMark.id === edge.id;
+        const isSelected = selectedEdgeId === edge.id;
         return (
           <g key={`edge-${edge.id}`}>
             {owner != null && (
@@ -207,6 +209,8 @@ export default function Board({
                   ? "road"
                   : isPending
                   ? "road-target clickable pending"
+                  : isSelected
+                  ? "road-target clickable selected"
                   : clickable
                   ? "road-target clickable"
                   : "road"

@@ -26,6 +26,24 @@ export const HEX_META = {
 
 export const RESOURCE_ORDER = ["LUMBER", "BRICK", "WOOL", "GRAIN", "ORE"];
 
+export const DEV_CARD_META = {
+  KNIGHT: { label: "Knight", emoji: "⚔️" },
+  MONOPOLY: { label: "Monopoly", emoji: "🎩" },
+  YEAR_OF_PLENTY: { label: "Year of Plenty", emoji: "🎁" },
+  ROAD_BUILDING: { label: "Road Building", emoji: "🛤️" },
+  VICTORY_POINT: { label: "Victory Point", emoji: "⭐" },
+};
+
+export const DEV_CARD_ORDER = ["KNIGHT", "MONOPOLY", "YEAR_OF_PLENTY", "ROAD_BUILDING", "VICTORY_POINT"];
+
+// Build costs (as lists of resource keys, for showing emoji icons).
+export const BUILD_COST = {
+  ROAD: ["LUMBER", "BRICK"],
+  SETTLEMENT: ["LUMBER", "BRICK", "WOOL", "GRAIN"],
+  CITY: ["GRAIN", "GRAIN", "ORE", "ORE", "ORE"],
+  DEV: ["WOOL", "GRAIN", "ORE"],
+};
+
 export const PHASE_LABEL = {
   SETUP_SETTLEMENT: "Setup — place a settlement",
   SETUP_ROAD: "Setup — place a road",
@@ -43,6 +61,11 @@ export function visibleVp(state, playerId) {
   if (state.longest_road_owner === playerId) vp += 2;
   if (state.largest_army_owner === playerId) vp += 2;
   return vp;
+}
+
+// Hidden Victory Point dev cards (only counted for your own actual total).
+export function victoryPointCards(player) {
+  return (player.dev_cards?.VICTORY_POINT || 0) + (player.new_dev_cards?.VICTORY_POINT || 0);
 }
 
 function resourceSummary(resources) {

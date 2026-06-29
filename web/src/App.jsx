@@ -1,8 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Board from "./components/Board.jsx";
 import ActionPanel from "./components/ActionPanel.jsx";
+import ActionsPanel from "./components/ActionsPanel.jsx";
 import ActionLog from "./components/ActionLog.jsx";
 import PlayerPanel from "./components/PlayerPanel.jsx";
+import BankPanel from "./components/BankPanel.jsx";
+import LegendModal from "./components/LegendModal.jsx";
 import * as api from "./api.js";
 import { BOT_ID, HUMAN_ID, logLine, PLAYER_NAMES } from "./format.js";
 
@@ -17,6 +20,8 @@ const PLACEMENT_PROMPT = {
   PLACE_ROAD: "Place your road here?",
   BUILD_ROAD: "Build a road here?",
   MOVE_ROBBER: "Move the robber here?",
+  PLAY_KNIGHT: "Play Knight & move robber here?",
+  PLAY_ROAD_BUILDING: "Build road here?",
 };
 
 export default function App() {
@@ -25,6 +30,9 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [pending, setPending] = useState(null); // placement action awaiting confirmation
+  const [showKey, setShowKey] = useState(false); // legend modal
+  const [actionMode, setActionMode] = useState(null); // armed board action (build/knight/road-building)
+  const [roadFirst, setRoadFirst] = useState(null); // first edge picked for Road Building
 
   const startedRef = useRef(false);
   const botRunningRef = useRef(false);
@@ -60,10 +68,16 @@ export default function App() {
     [appendLog]
   );
 
+  const resetTargeting = useCallback(() => {
+    setPending(null);
+    setActionMode(null);
+    setRoadFirst(null);
+  }, []);
+
   const startNewGame = useCallback(async () => {
     setBusy(true);
     setError(null);
-    setPending(null);
+    resetTargeting();
     try {
       const seed = Math.floor(Math.random() * 1_000_000);
       const resp = await api.newGame(seed);
@@ -75,7 +89,7 @@ export default function App() {
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [resetTargeting]);
 
   useEffect(() => {
     if (startedRef.current) return;
@@ -88,6 +102,7 @@ export default function App() {
       if (!game || busy || botRunningRef.current) return;
       setBusy(true);
       setError(null);
+      resetTargeting();
       try {
         const resp = await api.applyAction(game.state, action);
         appendLog(action);
@@ -101,62 +116,117 @@ export default function App() {
         setBusy(false);
       }
     },
-    [game, busy, appendLog, driveBot]
+    [game, busy, appendLog, driveBot, resetTargeting]
   );
 
-  // Highlight sets + click resolution for board-driven actions.
+  // Highlight sets + click resolution. Forced phases (setup placement, robber
+  // move) auto-highlight their spots; during MAIN nothing highlights until the
+  // player arms an action from the menu (actionMode).
   const { highlight, resolveNode, resolveEdge, resolveHex } = useMemo(() => {
     const nodes = new Set();
     const cities = new Set();
     const edges = new Set();
     const hexes = new Set();
-    const empty = { highlight: { nodes, cities, edges, hexes } };
+    const none = () => null;
+    const wrap = (extra) => ({ highlight: { nodes, cities, edges, hexes }, resolveNode: none, resolveEdge: none, resolveHex: none, ...extra });
     if (!game || game.winner != null || game.state.current_player !== HUMAN_ID) {
-      return { ...empty, resolveNode: () => null, resolveEdge: () => null, resolveHex: () => null };
+      return wrap();
     }
-    for (const a of game.legal_actions) {
-      const p = a.payload ?? {};
-      switch (a.action_type) {
-        case "PLACE_SETTLEMENT":
-        case "BUILD_SETTLEMENT":
-          nodes.add(p.node_id);
-          break;
-        case "BUILD_CITY":
-          cities.add(p.node_id);
-          break;
-        case "PLACE_ROAD":
-        case "BUILD_ROAD":
-          edges.add(p.edge_id);
-          break;
-        case "MOVE_ROBBER":
-          hexes.add(p.hex_id);
-          break;
-        default:
-          break;
+    const la = game.legal_actions;
+    const phase = game.state.phase;
+    const each = (type, fn) => la.forEach((a) => a.action_type === type && fn(a.payload));
+    const findBy = (type, key, id) => la.find((a) => a.action_type === type && a.payload[key] === id) ?? null;
+
+    // ---- Forced sub-phases (no menu needed) ----
+    if (phase === "SETUP_SETTLEMENT") {
+      each("PLACE_SETTLEMENT", (p) => nodes.add(p.node_id));
+      return wrap({ resolveNode: (id) => findBy("PLACE_SETTLEMENT", "node_id", id) });
+    }
+    if (phase === "SETUP_ROAD") {
+      each("PLACE_ROAD", (p) => edges.add(p.edge_id));
+      return wrap({ resolveEdge: (id) => findBy("PLACE_ROAD", "edge_id", id) });
+    }
+    if (phase === "MOVE_ROBBER") {
+      each("MOVE_ROBBER", (p) => hexes.add(p.hex_id));
+      return wrap({ resolveHex: (id) => findBy("MOVE_ROBBER", "hex_id", id) });
+    }
+
+    // ---- MAIN: only the armed action highlights its spots ----
+    if (phase === "MAIN") {
+      if (actionMode === "BUILD_SETTLEMENT") {
+        each("BUILD_SETTLEMENT", (p) => nodes.add(p.node_id));
+        return wrap({ resolveNode: (id) => findBy("BUILD_SETTLEMENT", "node_id", id) });
+      }
+      if (actionMode === "BUILD_CITY") {
+        each("BUILD_CITY", (p) => cities.add(p.node_id));
+        return wrap({ resolveNode: (id) => findBy("BUILD_CITY", "node_id", id) });
+      }
+      if (actionMode === "BUILD_ROAD") {
+        each("BUILD_ROAD", (p) => edges.add(p.edge_id));
+        return wrap({ resolveEdge: (id) => findBy("BUILD_ROAD", "edge_id", id) });
+      }
+      if (actionMode === "KNIGHT") {
+        each("PLAY_KNIGHT", (p) => hexes.add(p.robber_hex_id));
+        return wrap({ resolveHex: (id) => findBy("PLAY_KNIGHT", "robber_hex_id", id) });
+      }
+      if (actionMode === "ROAD_BUILDING") {
+        const ra = la.filter((a) => a.action_type === "PLAY_ROAD_BUILDING");
+        if (roadFirst == null) {
+          ra.forEach((a) => a.payload.edge_ids.length === 1 && edges.add(a.payload.edge_ids[0]));
+        } else {
+          edges.add(roadFirst);
+          ra.forEach((a) => {
+            const e = a.payload.edge_ids;
+            if (e.length === 2 && e.includes(roadFirst)) edges.add(e[0] === roadFirst ? e[1] : e[0]);
+          });
+        }
+        return wrap(); // edge clicks handled in onEdge
       }
     }
-    const find = (pred) => game.legal_actions.find(pred) ?? null;
-    return {
-      highlight: { nodes, cities, edges, hexes },
-      resolveNode: (id) =>
-        cities.has(id)
-          ? find((a) => a.action_type === "BUILD_CITY" && a.payload.node_id === id)
-          : find(
-              (a) =>
-                (a.action_type === "PLACE_SETTLEMENT" || a.action_type === "BUILD_SETTLEMENT") &&
-                a.payload.node_id === id
-            ),
-      resolveEdge: (id) =>
-        find(
-          (a) => (a.action_type === "PLACE_ROAD" || a.action_type === "BUILD_ROAD") && a.payload.edge_id === id
-        ),
-      resolveHex: (id) => find((a) => a.action_type === "MOVE_ROBBER" && a.payload.hex_id === id),
-    };
-  }, [game]);
+    return wrap();
+  }, [game, actionMode, roadFirst]);
 
   const onNode = useCallback((id) => { const a = resolveNode(id); if (a) setPending(a); }, [resolveNode]);
-  const onEdge = useCallback((id) => { const a = resolveEdge(id); if (a) setPending(a); }, [resolveEdge]);
   const onHex = useCallback((id) => { const a = resolveHex(id); if (a) setPending(a); }, [resolveHex]);
+  const onEdge = useCallback(
+    (id) => {
+      // Road Building takes up to two clicks to choose an edge pair.
+      if (actionMode === "ROAD_BUILDING" && game) {
+        const ra = game.legal_actions.filter((a) => a.action_type === "PLAY_ROAD_BUILDING");
+        if (roadFirst == null) {
+          const hasPair = ra.some((a) => a.payload.edge_ids.length === 2 && a.payload.edge_ids.includes(id));
+          if (hasPair) {
+            setRoadFirst(id);
+            return;
+          }
+          const single = ra.find((a) => a.payload.edge_ids.length === 1 && a.payload.edge_ids[0] === id);
+          if (single) setPending(single);
+          return;
+        }
+        if (id === roadFirst) {
+          setRoadFirst(null);
+          return;
+        }
+        const pair = ra.find(
+          (a) =>
+            a.payload.edge_ids.length === 2 &&
+            a.payload.edge_ids.includes(roadFirst) &&
+            a.payload.edge_ids.includes(id)
+        );
+        if (pair) setPending(pair);
+        return;
+      }
+      const a = resolveEdge(id);
+      if (a) setPending(a);
+    },
+    [actionMode, roadFirst, game, resolveEdge]
+  );
+
+  const toggleMode = useCallback((mode) => {
+    setPending(null);
+    setRoadFirst(null);
+    setActionMode((cur) => (cur === mode ? null : mode));
+  }, []);
 
   const confirmPending = useCallback(() => {
     if (!pending) return;
@@ -179,6 +249,10 @@ export default function App() {
         return { kind: "edge", id: p.edge_id };
       case "MOVE_ROBBER":
         return { kind: "hex", id: p.hex_id };
+      case "PLAY_KNIGHT":
+        return { kind: "hex", id: p.robber_hex_id };
+      case "PLAY_ROAD_BUILDING":
+        return { kind: "edge", id: p.edge_ids[p.edge_ids.length - 1] };
       default:
         return null;
     }
@@ -194,6 +268,11 @@ export default function App() {
 
   const { state, winner } = game;
 
+  const byType = {};
+  for (const a of game.legal_actions) {
+    (byType[a.action_type] ??= []).push(a);
+  }
+
   return (
     <div className="app">
       <div className="sea-bg">
@@ -201,11 +280,15 @@ export default function App() {
           state={state}
           highlight={highlight}
           pendingMark={pendingMark}
+          selectedEdgeId={roadFirst}
           pendingPrompt={
             pending ? PLACEMENT_PROMPT[pending.action_type] ?? "Confirm this action?" : null
           }
           onConfirm={confirmPending}
-          onCancel={() => setPending(null)}
+          onCancel={() => {
+            setPending(null);
+            setRoadFirst(null);
+          }}
           confirmDisabled={busy}
           onNode={onNode}
           onEdge={onEdge}
@@ -223,8 +306,23 @@ export default function App() {
               New game
             </button>
           </div>
-          <PlayerPanel state={state} playerId={HUMAN_ID} targetVp={state.config.target_vp} />
+          <PlayerPanel
+            state={state}
+            playerId={HUMAN_ID}
+            targetVp={state.config.target_vp}
+            byType={byType}
+            onAction={handleAction}
+            onToggleMode={toggleMode}
+            actionMode={actionMode}
+          />
           <PlayerPanel state={state} playerId={BOT_ID} targetVp={state.config.target_vp} />
+          <ActionsPanel
+            byType={byType}
+            onAction={handleAction}
+            actionMode={actionMode}
+            onToggleMode={toggleMode}
+            isHumanTurn={winner == null && state.current_player === HUMAN_ID}
+          />
           <ActionPanel
             state={state}
             legalActions={game.legal_actions}
@@ -235,6 +333,7 @@ export default function App() {
         </aside>
 
         <aside className="right-col">
+          <BankPanel state={state} />
           <ActionLog entries={log} />
         </aside>
 
@@ -255,6 +354,10 @@ export default function App() {
         </a>
       </footer>
 
+      <button className="key-button" onClick={() => setShowKey(true)} title="Key / legend">
+        Key
+      </button>
+
       <a
         className="help-button"
         href="https://www.catan.com/understand-catan/game-rules"
@@ -265,6 +368,8 @@ export default function App() {
       >
         ?
       </a>
+
+      {showKey && <LegendModal onClose={() => setShowKey(false)} />}
     </div>
   );
 }
