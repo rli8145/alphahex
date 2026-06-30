@@ -14,6 +14,7 @@ from catan_bots.value_network import (
     FEATURE_NAMES,
     TrainingExample,
     ValueNetwork,
+    action_policy_label,
     extract_state_features,
     load_value_network,
     save_value_network,
@@ -29,7 +30,7 @@ DEFAULT_DATASET_PATH = TRAINING_DIR / "selfplay.jsonl"
 DEFAULT_LEADERBOARD_PATH = TRAINING_DIR / "leaderboard.json"
 DEFAULT_HISTORY_DIR = TRAINING_DIR / "checkpoints"
 DEFAULT_LOG_PATH = TRAINING_DIR / "logs" / "train.out.log"
-BOARD_RULE_VERSION = "random_start_balanced_board_random_ports_friendly_robber"
+BOARD_RULE_VERSION = "random_start_balanced_board_random_ports_friendly_robber_exact_policy_v1"
 _LOG_FILE_PATH: Path | None = None
 
 TRAINABLE_PHASES = {Phase.SETUP_SETTLEMENT, Phase.SETUP_ROAD, Phase.MOVE_ROBBER, Phase.MAIN}
@@ -50,19 +51,19 @@ PROFILE_DEFAULTS = {
         "history_opponents": 0,
     },
     "offline": {
-        "games": 4,
+        "games": 6,
         "hidden_size": 64,
         "epochs": 4,
         "learning_rate": 0.015,
         "l2": 0.0001,
-        "iterations": 4,
-        "rollout_depth": 4,
-        "branch_limit": 6,
+        "iterations": 6,
+        "rollout_depth": 5,
+        "branch_limit": 8,
         "max_turns": 260,
-        "eval_games": 2,
-        "buffer_samples": 1000,
+        "eval_games": 6,
+        "buffer_samples": 2000,
         "history_opponent_rate": 0.25,
-        "history_opponents": 4,
+        "history_opponents": 6,
     },
 }
 
@@ -440,13 +441,13 @@ def collect_game_examples(
                 illegal_actions += 1
                 action = rng.choice(legal_actions)
             if record_features is not None:
-                positions.append(RecordedPosition(record_features, player_id, action.action_type.name))
+                positions.append(RecordedPosition(record_features, player_id, action_policy_label(action)))
             state = apply_action(state, action, rng)
         except Exception as exc:
             crashes += 1
             fallback = rng.choice(legal_actions)
             if record_features is not None:
-                positions.append(RecordedPosition(record_features, player_id, fallback.action_type.name))
+                positions.append(RecordedPosition(record_features, player_id, action_policy_label(fallback)))
             try:
                 state = apply_action(state, fallback, rng)
             except IllegalActionError:
@@ -539,6 +540,53 @@ def evaluate_candidate(
         "illegal_actions": illegal_actions,
         "crashes": crashes,
         "average_turns": round(total_turns / games, 2),
+    }
+
+
+def build_eval_report(
+    *,
+    candidate_path: Path,
+    opponent_checkpoint: Path | None,
+    history_dir: Path,
+    seed: int,
+    games: int,
+    iterations: int,
+    rollout_depth: int,
+    branch_limit: int,
+    max_turns: int,
+) -> dict[str, Any]:
+    candidate = load_value_network(candidate_path)
+    if candidate is None:
+        raise SystemExit(f"could not load candidate checkpoint: {candidate_path}")
+
+    opponent_path = opponent_checkpoint or _select_report_opponent(candidate_path, history_dir)
+    opponent = load_value_network(opponent_path) if opponent_path is not None else None
+    if opponent_path is not None and opponent is None:
+        raise SystemExit(f"could not load opponent checkpoint: {opponent_path}")
+
+    result = evaluate_candidate(
+        candidate=candidate,
+        current=opponent,
+        seed=seed,
+        games=games,
+        iterations=iterations,
+        rollout_depth=rollout_depth,
+        branch_limit=branch_limit,
+        max_turns=max_turns,
+    )
+    return {
+        "candidate": str(candidate_path),
+        "opponent": str(opponent_path) if opponent_path is not None else "heuristic_baseline",
+        "board_rule_version": BOARD_RULE_VERSION,
+        "settings": {
+            "games": games,
+            "iterations": iterations,
+            "rollout_depth": rollout_depth,
+            "branch_limit": branch_limit,
+            "max_turns": max_turns,
+            "seed": seed,
+        },
+        "result": result,
     }
 
 
@@ -703,6 +751,32 @@ def _unpack_example(example: TrainingExample) -> tuple[list[float], float, str |
     return features, float(target), policy_target
 
 
+def _select_report_opponent(candidate_path: Path, history_dir: Path) -> Path | None:
+    current_rule_paths = _history_checkpoint_paths(history_dir, matching_rules=True)
+    fallback_paths = _history_checkpoint_paths(history_dir, matching_rules=False)
+    candidate_resolved = _safe_resolve(candidate_path)
+    for path in current_rule_paths or fallback_paths:
+        if _safe_resolve(path) != candidate_resolved:
+            return path
+    return None
+
+
+def _history_checkpoint_paths(history_dir: Path, *, matching_rules: bool) -> list[Path]:
+    if not history_dir.exists():
+        return []
+    paths = sorted(history_dir.glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
+    if not matching_rules:
+        return paths
+    return [path for path in paths if _checkpoint_matches_board_rules(path)]
+
+
+def _safe_resolve(path: Path) -> Path:
+    try:
+        return path.resolve()
+    except OSError:
+        return path
+
+
 def _load_history_networks(history_dir: Path, *, limit: int) -> list[ValueNetwork]:
     if limit <= 0 or not history_dir.exists():
         return []
@@ -818,6 +892,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--continuous", action="store_true", help="keep training and checkpointing until the process is stopped")
     parser.add_argument("--sleep-seconds", type=float, default=0.0, help="pause between continuous training cycles")
     parser.add_argument("--evaluate-candidate", type=Path, help="evaluate this checkpoint against --output/current and exit")
+    parser.add_argument("--eval-report", action="store_true", help="evaluate --output against the previous/history checkpoint and exit")
+    parser.add_argument("--opponent-checkpoint", type=Path, help="checkpoint to use as the --eval-report opponent")
     parser.add_argument("--smoke", action="store_true", help="run random-board plus MCTS-NN smoke checks and exit")
     args = parser.parse_args(argv)
 
@@ -846,6 +922,22 @@ def main(argv: list[str] | None = None) -> int:
         "history_opponents": args.history_opponents if args.history_opponents is not None else defaults["history_opponents"],
     }
     dataset_path = None if args.no_dataset else args.dataset
+
+    if args.eval_report:
+        report_games = args.eval_games if args.eval_games is not None else 50
+        report = build_eval_report(
+            candidate_path=args.output,
+            opponent_checkpoint=args.opponent_checkpoint,
+            history_dir=args.history_dir,
+            seed=args.seed,
+            games=report_games,
+            iterations=settings["iterations"],
+            rollout_depth=settings["rollout_depth"],
+            branch_limit=settings["branch_limit"],
+            max_turns=settings["max_turns"],
+        )
+        print(json.dumps(report, indent=2))
+        return 0
 
     if args.evaluate_candidate is not None:
         candidate = load_value_network(args.evaluate_candidate)

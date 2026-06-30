@@ -318,9 +318,9 @@ def _action_value(
     score = _evaluate_state(next_state, player_id, weights)
     if value_network is not None:
         # The NN value head scores the resulting state, while the policy head
-        # gives a small prior to action types that self-play has favored before.
+        # gives a small prior to exact actions self-play has favored before.
         score += 8.0 * (value_network.predict_state(next_state, player_id) - 0.5)
-        score += 3.0 * value_network.action_prior(extract_state_features(state, player_id), action.action_type)
+        score += 3.0 * value_network.action_prior(extract_state_features(state, player_id), action)
     return score
 
 

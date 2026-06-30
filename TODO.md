@@ -27,7 +27,7 @@ This file tracks concrete work for the 1v1 Catan simulator, web client, and MCTS
 - [x] Sample self-play opponents from checkpoint history to reduce overfitting.
 - [x] Use larger MCTS search budgets for training and evaluation.
 - [x] Keep a capped search budget for the website bot so play remains responsive.
-- [ ] Add richer exact-action policy targets, not only action-type policy targets.
+- [x] Add richer exact-action policy targets, not only action-type policy targets.
 - [ ] Add parallel self-play workers once single-process training is stable.
 
 ## Feature Engineering
@@ -56,14 +56,14 @@ This file tracks concrete work for the 1v1 Catan simulator, web client, and MCTS
 - [x] Randomize port order/rotation during board generation.
 - [x] Move continuous training logs under `data/training/logs/` instead of the temp folder.
 - [x] Improve random board selection with a simple fairness score for resource clustering and production balance.
-- [ ] Stop tracking generated training artifacts; keep `data/training/.gitkeep`, ignore `selfplay.jsonl`, `leaderboard.json`, and checkpoint history.
-- [ ] Let the first stricter-board continuous training cycle finish and record whether the candidate checkpoint was accepted.
-- [ ] Add a readable eval report/table for win rate, VP margin, average turns, illegal actions, crashes, and accepted/rejected checkpoints.
+- [x] Stop tracking generated training artifacts; keep `data/training/.gitkeep`, ignore `selfplay.jsonl`, `leaderboard.json`, checkpoint history, and local model JSON files.
+- [ ] Let the first exact-policy continuous training cycle finish and record whether the candidate checkpoint was accepted.
+- [x] Add a readable eval report command for win rate, VP margin, average turns, illegal actions, crashes, and checkpoint comparison.
 - [ ] Add chart-friendly CSV export for long training runs.
 - [ ] Add periodic pruning/compaction for very large `data/training/selfplay.jsonl` files.
 
 ## Training Math
 
 - The value head predicts win chance from state features. Its derivative is computed in `packages/bots/catan_bots/value_network.py` in `_train_one()` at `d_logit = (output - target) * output * (1.0 - output)`.
-- The policy head predicts the chosen legal action type. Its gradient is `probability - label`, scaled by `policy_loss_weight`, and is applied in the same `_train_one()` method.
+- The policy head predicts the chosen exact action label, such as `BUILD_ROAD:edge:17` or `MOVE_ROBBER:hex:8`. Its gradient is `probability - label`, scaled by `policy_loss_weight`, and is applied in the same `_train_one()` method.
 - `rng.shuffle(order)` randomizes training-example order each epoch so sequential positions from the same self-play game do not update the weights in the same repeated pattern.

@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from catan_engine.actions import ActionType, Phase
-from catan_engine.resources import HEX_TO_RESOURCE, Resource
+from catan_engine.actions import Action, ActionType, Phase
+from catan_engine.resources import ALL_RESOURCES, HEX_TO_RESOURCE, Resource, parse_resource
 from catan_engine.rules import CITY_COST, SETTLEMENT_COST, can_build_road, can_place_settlement, maritime_trade_ratio
 from catan_engine.scoring import calculate_longest_road, total_vp, visible_vp
 from catan_engine.state import GameState
@@ -16,7 +16,110 @@ from catan_engine.state import GameState
 DEFAULT_VALUE_NETWORK_PATH = Path(__file__).with_name("mcts_value_network.json")
 PHASES = tuple(Phase)
 ACTION_TYPES = tuple(ActionType)
-POLICY_NAMES = [action_type.name for action_type in ACTION_TYPES]
+STANDARD_HEX_COUNT = 19
+STANDARD_NODE_COUNT = 54
+STANDARD_EDGE_COUNT = 72
+
+
+def _build_policy_names() -> list[str]:
+    labels = [action_type.name for action_type in ACTION_TYPES]
+    for action_type in (ActionType.PLACE_SETTLEMENT, ActionType.BUILD_SETTLEMENT, ActionType.BUILD_CITY):
+        labels.extend(f"{action_type.name}:node:{node_id}" for node_id in range(STANDARD_NODE_COUNT))
+    for action_type in (ActionType.PLACE_ROAD, ActionType.BUILD_ROAD, ActionType.PLAY_ROAD_BUILDING):
+        labels.extend(f"{action_type.name}:edge:{edge_id}" for edge_id in range(STANDARD_EDGE_COUNT))
+    labels.extend(f"{ActionType.MOVE_ROBBER.name}:hex:{hex_id}" for hex_id in range(STANDARD_HEX_COUNT))
+    for hex_id in range(STANDARD_HEX_COUNT):
+        labels.append(f"{ActionType.PLAY_KNIGHT.name}:hex:{hex_id}:target:none")
+        labels.extend(f"{ActionType.PLAY_KNIGHT.name}:hex:{hex_id}:target:{target}" for target in range(2))
+    labels.extend(f"{ActionType.STEAL_RESOURCE.name}:target:{target}" for target in range(2))
+    labels.extend(f"{ActionType.PLAY_MONOPOLY.name}:resource:{resource.name}" for resource in ALL_RESOURCES)
+    for first in ALL_RESOURCES:
+        for second in ALL_RESOURCES:
+            labels.append(f"{ActionType.PLAY_YEAR_OF_PLENTY.name}:resources:{first.name},{second.name}")
+    for give in ALL_RESOURCES:
+        for receive in ALL_RESOURCES:
+            if receive != give:
+                labels.append(f"{ActionType.MARITIME_TRADE.name}:give:{give.name}:receive:{receive.name}")
+    return labels
+
+
+def action_policy_label(action: Action) -> str:
+    action_type = action.action_type
+    payload = action.payload
+    if action_type in {ActionType.PLACE_SETTLEMENT, ActionType.BUILD_SETTLEMENT, ActionType.BUILD_CITY}:
+        node_id = _payload_int(payload, "node_id")
+        if node_id is not None:
+            return f"{action_type.name}:node:{node_id}"
+    if action_type in {ActionType.PLACE_ROAD, ActionType.BUILD_ROAD}:
+        edge_id = _payload_int(payload, "edge_id")
+        if edge_id is not None:
+            return f"{action_type.name}:edge:{edge_id}"
+    if action_type == ActionType.PLAY_ROAD_BUILDING:
+        edge_ids = payload.get("edge_ids", [])
+        if isinstance(edge_ids, list) and edge_ids:
+            try:
+                return f"{action_type.name}:edge:{int(edge_ids[0])}"
+            except (TypeError, ValueError):
+                pass
+    if action_type == ActionType.MOVE_ROBBER:
+        hex_id = _payload_int(payload, "hex_id")
+        if hex_id is not None:
+            return f"{action_type.name}:hex:{hex_id}"
+    if action_type == ActionType.PLAY_KNIGHT:
+        hex_id = _payload_int(payload, "robber_hex_id", "hex_id")
+        target = _payload_int(payload, "target_player")
+        if hex_id is not None:
+            target_label = str(target) if target is not None else "none"
+            return f"{action_type.name}:hex:{hex_id}:target:{target_label}"
+    if action_type == ActionType.STEAL_RESOURCE:
+        target = _payload_int(payload, "target_player")
+        if target is not None:
+            return f"{action_type.name}:target:{target}"
+    if action_type == ActionType.PLAY_MONOPOLY:
+        resource = _payload_resource(payload, "resource")
+        if resource is not None:
+            return f"{action_type.name}:resource:{resource}"
+    if action_type == ActionType.PLAY_YEAR_OF_PLENTY:
+        resources = payload.get("resources", [])
+        if isinstance(resources, list) and len(resources) >= 2:
+            first = _resource_name(resources[0])
+            second = _resource_name(resources[1])
+            if first is not None and second is not None:
+                return f"{action_type.name}:resources:{first},{second}"
+    if action_type == ActionType.MARITIME_TRADE:
+        give = _payload_resource(payload, "give")
+        receive = _payload_resource(payload, "receive")
+        if give is not None and receive is not None:
+            return f"{action_type.name}:give:{give}:receive:{receive}"
+    return action_type.name
+
+
+def _payload_int(payload: dict[str, Any], *keys: str) -> int | None:
+    for key in keys:
+        value = payload.get(key)
+        if value is None:
+            continue
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _payload_resource(payload: dict[str, Any], key: str) -> str | None:
+    return _resource_name(payload.get(key))
+
+
+def _resource_name(value: Any) -> str | None:
+    if value is None:
+        return None
+    try:
+        return parse_resource(value).name
+    except (TypeError, ValueError):
+        return None
+
+
+POLICY_NAMES = _build_policy_names()
 POLICY_INDEX = {name: index for index, name in enumerate(POLICY_NAMES)}
 FEATURE_NAMES = [
     "is_current_player",
@@ -170,8 +273,14 @@ class ValueNetwork:
         probabilities = _softmax(logits)
         return {name: probabilities[index] for index, name in enumerate(POLICY_NAMES)}
 
-    def action_prior(self, features: list[float], action_type: ActionType) -> float:
-        return self.predict_policy(features).get(action_type.name, 0.0)
+    def action_prior(self, features: list[float], action: Action | ActionType) -> float:
+        probabilities = self.predict_policy(features)
+        if isinstance(action, Action):
+            exact_label = action_policy_label(action)
+            if exact_label in probabilities:
+                return probabilities[exact_label]
+            return probabilities.get(action.action_type.name, 0.0)
+        return probabilities.get(action.name, 0.0)
 
     def train(
         self,
