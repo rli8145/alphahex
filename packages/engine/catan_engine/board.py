@@ -2,9 +2,34 @@ from __future__ import annotations
 
 import math
 import random
+from collections import Counter
 from dataclasses import dataclass
 
 from catan_engine.resources import HEX_TO_RESOURCE, HexType, Resource
+
+STANDARD_RESOURCE_TYPES = [
+    HexType.LUMBER,
+    HexType.LUMBER,
+    HexType.LUMBER,
+    HexType.LUMBER,
+    HexType.BRICK,
+    HexType.BRICK,
+    HexType.BRICK,
+    HexType.WOOL,
+    HexType.WOOL,
+    HexType.WOOL,
+    HexType.WOOL,
+    HexType.GRAIN,
+    HexType.GRAIN,
+    HexType.GRAIN,
+    HexType.GRAIN,
+    HexType.ORE,
+    HexType.ORE,
+    HexType.ORE,
+    HexType.DESERT,
+]
+STANDARD_NUMBER_TOKENS = [2, 3, 3, 4, 4, 5, 5, 6, 6, 8, 8, 9, 9, 10, 10, 11, 11, 12]
+RED_NUMBER_TOKENS = {6, 8}
 
 
 @dataclass
@@ -146,6 +171,12 @@ class Board:
             raise ValueError("robber hex does not exist")
         if self.hexes[self.robber_hex_id].hex_type != HexType.DESERT:
             raise ValueError("robber must start on desert")
+        if len(self.hexes) != 19:
+            raise ValueError("standard board must have 19 hexes")
+        if len(self.nodes) != 54:
+            raise ValueError("standard board must have 54 nodes")
+        if len(self.edges) != 72:
+            raise ValueError("standard board must have 72 edges")
 
         for edge in self.edges.values():
             if edge.node_a not in self.nodes or edge.node_b not in self.nodes:
@@ -177,6 +208,62 @@ class Board:
                     raise ValueError(f"hex {hex_tile.id} references missing node")
                 if hex_tile.id not in self.nodes[node_id].hex_ids:
                     raise ValueError(f"hex {hex_tile.id} has asymmetric node {node_id}")
+
+        self._validate_standard_catan_setup()
+
+    def _validate_standard_catan_setup(self) -> None:
+        resource_counts = Counter(hex_tile.hex_type for hex_tile in self.hexes.values())
+        expected_resource_counts = Counter(STANDARD_RESOURCE_TYPES)
+        if resource_counts != expected_resource_counts:
+            raise ValueError(f"invalid resource distribution: {resource_counts}")
+
+        number_counts = Counter(
+            hex_tile.number_token
+            for hex_tile in self.hexes.values()
+            if hex_tile.hex_type != HexType.DESERT
+        )
+        expected_number_counts = Counter(STANDARD_NUMBER_TOKENS)
+        if number_counts != expected_number_counts:
+            raise ValueError(f"invalid number token distribution: {number_counts}")
+
+        desert_hexes = [hex_tile for hex_tile in self.hexes.values() if hex_tile.hex_type == HexType.DESERT]
+        if len(desert_hexes) != 1:
+            raise ValueError("standard board must have one desert")
+        if desert_hexes[0].number_token is not None:
+            raise ValueError("desert must not have a number token")
+        if self.robber_hex_id != desert_hexes[0].id:
+            raise ValueError("robber must start on the desert")
+
+        for hex_tile in self.hexes.values():
+            if hex_tile.hex_type != HexType.DESERT and hex_tile.number_token is None:
+                raise ValueError(f"non-desert hex {hex_tile.id} is missing a number token")
+
+        for left in self.hexes.values():
+            if left.number_token is None:
+                continue
+            for right in self.hexes.values():
+                if left.id >= right.id or right.number_token is None:
+                    continue
+                if len(set(left.node_ids).intersection(right.node_ids)) == 2:
+                    if left.number_token == right.number_token:
+                        raise ValueError("matching number tokens must not be adjacent")
+                    if left.number_token in RED_NUMBER_TOKENS and right.number_token in RED_NUMBER_TOKENS:
+                        raise ValueError("red number tokens must not be adjacent")
+
+        port_nodes = [node for node in self.nodes.values() if node.port is not None]
+        if len(port_nodes) != 18:
+            raise ValueError("standard board must have 18 port nodes")
+        generic_ports = [node for node in port_nodes if node.port and node.port.kind == "generic" and node.port.ratio == 3]
+        if len(generic_ports) != 8:
+            raise ValueError("standard board must have four generic 3:1 ports")
+        for resource in Resource:
+            resource_ports = [
+                node
+                for node in port_nodes
+                if node.port and node.port.kind == "resource" and node.port.ratio == 2 and node.port.resource == resource
+            ]
+            if len(resource_ports) != 2:
+                raise ValueError(f"standard board must have one {resource.name} 2:1 port")
 
     def to_dict(self) -> dict:
         return {
@@ -210,45 +297,33 @@ def create_standard_board(seed: int | None = None) -> Board:
     ]
     coords.sort(key=lambda item: (item[1], item[0]))
 
-    resource_types = [
+    fixed_resource_types = [
         HexType.LUMBER,
         HexType.BRICK,
         HexType.WOOL,
-        HexType.GRAIN,
-        HexType.ORE,
         HexType.WOOL,
-        HexType.GRAIN,
-        HexType.LUMBER,
-        HexType.BRICK,
         HexType.DESERT,
         HexType.ORE,
-        HexType.GRAIN,
+        HexType.BRICK,
         HexType.WOOL,
+        HexType.GRAIN,
         HexType.LUMBER,
         HexType.ORE,
+        HexType.ORE,
+        HexType.LUMBER,
+        HexType.WOOL,
         HexType.BRICK,
         HexType.GRAIN,
-        HexType.WOOL,
         HexType.LUMBER,
+        HexType.GRAIN,
+        HexType.GRAIN,
     ]
-    numbers = iter([5, 2, 6, 3, 8, 10, 9, 12, 11, 4, 8, 10, 9, 4, 5, 6, 3, 11])
-    if seed is not None:
-        # Keep the desert at the center for a familiar fixed topology; seed only
-        # affects non-desert resource ordering for now.
-        non_desert = [hex_type for hex_type in resource_types if hex_type != HexType.DESERT]
-        rng.shuffle(non_desert)
-        iterator = iter(non_desert)
-        resource_types = [HexType.DESERT if hex_type == HexType.DESERT else next(iterator) for hex_type in resource_types]
-
-    hex_specs: list[tuple[int, int, HexType, int | None]] = []
-    robber_hex_id = 0
-    for index, (q, r) in enumerate(coords):
-        hex_type = resource_types[index]
-        if hex_type == HexType.DESERT:
-            robber_hex_id = index
-            hex_specs.append((q, r, hex_type, None))
-        else:
-            hex_specs.append((q, r, hex_type, next(numbers)))
+    fixed_number_tokens = [4, 8, 10, 3, 4, 12, 6, 10, 5, 11, 6, 9, 8, 2, 3, 11, 9, 5]
+    if seed is None:
+        hex_specs = _hex_specs_from_layout(coords, fixed_resource_types, fixed_number_tokens)
+    else:
+        hex_specs = _random_valid_hex_specs(coords, rng)
+    robber_hex_id = next(index for index, (_q, _r, hex_type, _number) in enumerate(hex_specs) if hex_type == HexType.DESERT)
 
     corner_keys: dict[tuple[float, float], int] = {}
     hex_corner_keys: list[tuple[tuple[float, float], ...]] = []
@@ -305,6 +380,57 @@ def create_standard_board(seed: int | None = None) -> Board:
     board = Board(hexes=hexes, nodes=nodes, edges=edges, robber_hex_id=robber_hex_id)
     board.validate()
     return board
+
+
+def _hex_specs_from_layout(
+    coords: list[tuple[int, int]],
+    resource_types: list[HexType],
+    number_tokens: list[int],
+) -> list[tuple[int, int, HexType, int | None]]:
+    numbers = iter(number_tokens)
+    hex_specs: list[tuple[int, int, HexType, int | None]] = []
+    for index, (q, r) in enumerate(coords):
+        hex_type = resource_types[index]
+        number = None if hex_type == HexType.DESERT else next(numbers)
+        hex_specs.append((q, r, hex_type, number))
+    return hex_specs
+
+
+def _random_valid_hex_specs(
+    coords: list[tuple[int, int]],
+    rng: random.Random,
+    max_attempts: int = 10_000,
+) -> list[tuple[int, int, HexType, int | None]]:
+    for _attempt in range(max_attempts):
+        resource_types = list(STANDARD_RESOURCE_TYPES)
+        number_tokens = list(STANDARD_NUMBER_TOKENS)
+        rng.shuffle(resource_types)
+        rng.shuffle(number_tokens)
+        hex_specs = _hex_specs_from_layout(coords, resource_types, number_tokens)
+        if not _numbers_have_invalid_adjacency(hex_specs):
+            return hex_specs
+    raise RuntimeError("failed to generate a valid randomized Catan board")
+
+
+def _numbers_have_invalid_adjacency(hex_specs: list[tuple[int, int, HexType, int | None]]) -> bool:
+    for left_index, (left_q, left_r, _left_type, left_number) in enumerate(hex_specs):
+        if left_number is None:
+            continue
+        for right_q, right_r, _right_type, right_number in hex_specs[left_index + 1 :]:
+            if right_number is None:
+                continue
+            if _hex_distance(left_q, left_r, right_q, right_r) == 1:
+                if left_number == right_number:
+                    return True
+                if left_number in RED_NUMBER_TOKENS and right_number in RED_NUMBER_TOKENS:
+                    return True
+    return False
+
+
+def _hex_distance(left_q: int, left_r: int, right_q: int, right_r: int) -> int:
+    left_s = -left_q - left_r
+    right_s = -right_q - right_r
+    return max(abs(left_q - right_q), abs(left_r - right_r), abs(left_s - right_s))
 
 
 def _hex_center(q: int, r: int) -> tuple[float, float]:

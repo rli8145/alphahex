@@ -12,7 +12,14 @@ from catan_engine.scoring import total_vp
 from catan_engine.state import GameConfig, initialize_game
 
 
-def run_game(bot_a, bot_b, config: GameConfig | None = None, seed: int = 0, max_turns: int = 1000) -> dict:
+def run_game(
+    bot_a,
+    bot_b,
+    config: GameConfig | None = None,
+    seed: int = 0,
+    max_turns: int = 1000,
+    save_replay_file: bool = True,
+) -> dict:
     rng = random.Random(seed)
     state = initialize_game(config=config, seed=seed)
     bots = [bot_a, bot_b]
@@ -63,11 +70,11 @@ def run_game(bot_a, bot_b, config: GameConfig | None = None, seed: int = 0, max_
         "illegal_action_count": illegal_action_count,
         "crash_count": crash_count,
     }
-    result["replay_path"] = save_replay(result)
+    result["replay_path"] = save_replay(result) if save_replay_file else None
     return result
 
 
-def run_many_games(bot_a, bot_b, n: int, seed: int = 0) -> dict:
+def run_many_games(bot_a, bot_b, n: int, seed: int = 0, save_replays: bool = True) -> dict:
     wins = {0: 0, 1: 0, "draw": 0}
     total_turns = 0
     total_vp = [0, 0]
@@ -77,7 +84,7 @@ def run_many_games(bot_a, bot_b, n: int, seed: int = 0) -> dict:
     results: list[dict[str, Any]] = []
 
     for index in range(n):
-        result = run_game(bot_a, bot_b, seed=seed + index)
+        result = run_game(bot_a, bot_b, seed=seed + index, save_replay_file=save_replays)
         winner = result["winner"]
         if winner in (0, 1):
             wins[winner] += 1
@@ -88,7 +95,8 @@ def run_many_games(bot_a, bot_b, n: int, seed: int = 0) -> dict:
         total_vp[1] += result["final_score"][1]
         illegal_action_count += result["illegal_action_count"]
         crash_count += result["crash_count"]
-        replay_paths.append(result["replay_path"])
+        if result["replay_path"] is not None:
+            replay_paths.append(result["replay_path"])
         results.append(result)
 
     return {
@@ -131,11 +139,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--bot-b", default="mcts")
     parser.add_argument("--games", type=int, default=1)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--no-replay", action="store_true", help="run simulations without writing replay JSON files")
     args = parser.parse_args(argv)
 
     from catan_bots import create_bot
 
-    summary = run_many_games(create_bot(args.bot_a), create_bot(args.bot_b), args.games, seed=args.seed)
+    summary = run_many_games(
+        create_bot(args.bot_a),
+        create_bot(args.bot_b),
+        args.games,
+        seed=args.seed,
+        save_replays=not args.no_replay,
+    )
     printable = {key: value for key, value in summary.items() if key != "results"}
     print(json.dumps(printable, indent=2))
     return 0

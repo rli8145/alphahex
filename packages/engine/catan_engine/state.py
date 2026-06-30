@@ -265,7 +265,7 @@ class GameState:
 def initialize_game(config: GameConfig | None = None, seed: int = 0) -> GameState:
     config = config or GameConfig()
     rng = random.Random(seed)
-    board = create_standard_board()
+    board = create_standard_board(seed=seed)
     return GameState(
         board=board,
         config=config,
