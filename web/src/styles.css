@@ -153,7 +153,7 @@ h3 {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
   padding: 12px 14px;
 }
 .turn-indicator {
@@ -166,6 +166,30 @@ h3 {
 }
 .turn-indicator strong {
   color: var(--ink);
+}
+.bot-version {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 5px 7px;
+  border: 1px solid var(--rule-soft);
+  border-radius: 7px;
+  color: var(--ink-soft);
+  background: rgba(255, 250, 238, 0.48);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.15;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bot-version.neural {
+  color: #1f5b40;
+  border-color: rgba(55, 126, 88, 0.55);
+  background: rgba(218, 239, 223, 0.7);
+}
+.bot-version.heuristic {
+  color: var(--ink-soft);
 }
 .topbar .btn-secondary {
   flex: 0 0 auto;

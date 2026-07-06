@@ -23,6 +23,8 @@ cd web && npm install && npm run dev   # http://localhost:5173, proxies /api -> 
 ## Train the agent
 
 ```bash
+python -m pip install -r requirements-training.txt
+
 # Neural value/policy network (self-play, parallel workers, gated acceptance)
 python -m catan_bots.train_mcts_nn --profile offline --seed 0            # one cycle
 python -m catan_bots.train_mcts_nn --profile offline --continuous --seed 0
@@ -37,6 +39,20 @@ by the server) and `mcts_weights.json` (heuristic). Training artifacts - replay 
 checkpoint history, leaderboard, JSON logs, per-cycle `train_metrics.csv` - live under
 `data/training/` (gitignored). Useful flags: `--workers` (parallel self-play/eval,
 default cpu−1), `--lr-decay`, `--dataset-max-games`, `--eval-report`, `--fresh`.
+
+## Deploy
+
+Production deploys run through `.github/workflows/vercel-production.yml` on every
+push to `main`. The workflow targets the linked Vercel project IDs and needs one
+GitHub secret:
+
+```text
+VERCEL_TOKEN
+```
+
+Runtime installs use `requirements.txt`, which intentionally excludes PyTorch so
+Vercel's Python function stays under the serverless bundle limit. Local training
+uses `requirements-training.txt`.
 
 ## Simulate agent vs agent
 

@@ -1,0 +1,29 @@
+name: Vercel Production Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: vercel-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_ORG_ID: team_4eYNBUF6m5N5f08gV6fyFTvm
+      VERCEL_PROJECT_ID: prj_W3Ydw7izWZFxDwsBmrCXHMftPv24
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Deploy to Vercel
+        run: npx vercel deploy --prod --yes --token="${{ secrets.VERCEL_TOKEN }}"

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import os
 import random
 import time
@@ -40,6 +41,10 @@ BOARD_RULE_VERSION = "random_start_balanced_board_random_ports_friendly_robber_e
 _LOG_FILE_PATH: Path | None = None
 
 TRAINABLE_PHASES = {Phase.SETUP_SETTLEMENT, Phase.SETUP_ROAD, Phase.MOVE_ROBBER, Phase.MAIN}
+SELFPLAY_ROOT_TEMPERATURE = 1.0
+SELFPLAY_TEMPERATURE_TURNS = 60
+SELFPLAY_DIRICHLET_ALPHA = 0.3
+SELFPLAY_DIRICHLET_EPSILON = 0.25
 PROFILE_DEFAULTS = {
     "quick": {
         "games": 1,
@@ -79,16 +84,24 @@ class RecordedPosition:
     features: list[float]
     player_id: int
     policy_target: str | None
+    policy_distribution: dict[str, float] | None = None
 
 
 @dataclass
 class GameExamples:
     examples: list[TrainingExample]
+    policy_distributions: list[dict[str, float] | None]
     winner: int | None
     final_score: list[int]
     turn_count: int
     illegal_actions: int
     crashes: int
+
+
+@dataclass
+class ReplayEntry:
+    example: TrainingExample
+    priority: float
 
 
 def _log_progress(enabled: bool, **payload: Any) -> None:
@@ -232,6 +245,7 @@ def train(
         branch_limit=branch_limit,
         max_turns=max_turns,
         workers=workers,
+        mirrored=True,
     )
     _log_progress(progress, cycle=cycle, stage="evaluation", status="finished", evaluation=evaluation)
     if incumbent is None:
@@ -255,6 +269,7 @@ def train(
             branch_limit=branch_limit,
             max_turns=max_turns,
             workers=workers,
+            mirrored=True,
         )
         _log_progress(
             progress,
@@ -312,6 +327,12 @@ def train(
         "randomized_boards": True,
         "board_rule_version": BOARD_RULE_VERSION,
         "policy_head": True,
+        "selfplay_sampling": {
+            "root_temperature": SELFPLAY_ROOT_TEMPERATURE,
+            "temperature_turns": SELFPLAY_TEMPERATURE_TURNS,
+            "dirichlet_alpha": SELFPLAY_DIRICHLET_ALPHA,
+            "dirichlet_epsilon": SELFPLAY_DIRICHLET_EPSILON,
+        },
         "ml_framework": "torch",
         "torch_device": torch_device_name(),
         "replay_dataset": str(dataset_path) if dataset_path is not None else None,
@@ -509,8 +530,26 @@ def collect_game_examples(
         history_player = rng.randrange(2)
         networks[history_player] = rng.choice(opponent_pool)
     bots = [
-        MCTSBot(iterations=iterations, rollout_depth=rollout_depth, branch_limit=branch_limit, value_network=networks[0]),
-        MCTSBot(iterations=iterations, rollout_depth=rollout_depth, branch_limit=branch_limit, value_network=networks[1]),
+        MCTSBot(
+            iterations=iterations,
+            rollout_depth=rollout_depth,
+            branch_limit=branch_limit,
+            value_network=networks[0],
+            root_temperature=SELFPLAY_ROOT_TEMPERATURE,
+            temperature_turns=SELFPLAY_TEMPERATURE_TURNS,
+            root_dirichlet_alpha=SELFPLAY_DIRICHLET_ALPHA,
+            root_dirichlet_epsilon=SELFPLAY_DIRICHLET_EPSILON,
+        ),
+        MCTSBot(
+            iterations=iterations,
+            rollout_depth=rollout_depth,
+            branch_limit=branch_limit,
+            value_network=networks[1],
+            root_temperature=SELFPLAY_ROOT_TEMPERATURE,
+            temperature_turns=SELFPLAY_TEMPERATURE_TURNS,
+            root_dirichlet_alpha=SELFPLAY_DIRICHLET_ALPHA,
+            root_dirichlet_epsilon=SELFPLAY_DIRICHLET_EPSILON,
+        ),
     ]
     positions: list[RecordedPosition] = []
     illegal_actions = 0
@@ -530,18 +569,23 @@ def collect_game_examples(
         )
         try:
             observation = {"player_id": player_id, "phase": state.phase.name, "_state": state}
-            action = bots[player_id].choose_action(observation, legal_actions, rng)
+            bot = bots[player_id]
+            action = bot.choose_action(observation, legal_actions, rng)
+            policy_target = bot.last_policy_target or action_policy_label(action)
+            policy_distribution = bot.last_policy_distribution
             if not is_legal_action(state, action):
                 illegal_actions += 1
                 action = rng.choice(legal_actions)
+                policy_target = action_policy_label(action)
+                policy_distribution = None
             if record_features is not None:
-                positions.append(RecordedPosition(record_features, player_id, action_policy_label(action)))
+                positions.append(RecordedPosition(record_features, player_id, policy_target, policy_distribution))
             state = apply_action(state, action, rng)
         except Exception as exc:
             crashes += 1
             fallback = rng.choice(legal_actions)
             if record_features is not None:
-                positions.append(RecordedPosition(record_features, player_id, action_policy_label(fallback)))
+                positions.append(RecordedPosition(record_features, player_id, action_policy_label(fallback), None))
             try:
                 state = apply_action(state, fallback, rng)
             except IllegalActionError:
@@ -558,12 +602,24 @@ def collect_game_examples(
         else:
             winner = None
 
+    total_positions = len(positions)
     examples: list[TrainingExample] = [
-        (position.features, _target_for_position(winner, final_score, position.player_id), position.policy_target)
-        for position in positions
+        (
+            position.features,
+            _target_for_position(
+                winner,
+                final_score,
+                position.player_id,
+                move_distance=total_positions - position_index - 1,
+            ),
+            position.policy_target,
+        )
+        for position_index, position in enumerate(positions)
     ]
+    policy_distributions = [position.policy_distribution for position in positions]
     return GameExamples(
         examples=examples,
+        policy_distributions=policy_distributions,
         winner=winner,
         final_score=final_score,
         turn_count=state.turn_number,
@@ -640,10 +696,14 @@ def evaluate_candidate(
     branch_limit: int,
     max_turns: int,
     workers: int = 1,
+    mirrored: bool = False,
 ) -> dict[str, Any]:
     if games <= 0:
         return {
+            "requested_games": games,
             "games": 0,
+            "board_seeds": 0,
+            "mirrored": mirrored,
             "candidate_wins": 0,
             "current_wins": 0,
             "draws": 0,
@@ -661,16 +721,50 @@ def evaluate_candidate(
     total_turns = 0
     total_margin = 0
     played = 0
+    played_board_seeds = 0
     early_stopped = False
     chunk_size = max(1, workers)
-    executor = ProcessPoolExecutor(max_workers=workers) if workers > 1 and games > 1 else None
+    # Mirrored evaluation keeps games as the requested arena size and rounds
+    # odd requests up so every board seed gets both candidate seats.
+    board_seed_count = (games + 1) // 2 if mirrored else games
+    target_games = board_seed_count * 2 if mirrored else games
+    executor = ProcessPoolExecutor(max_workers=workers) if workers > 1 and target_games > 1 else None
     try:
-        while played < games:
-            chunk = range(played, min(games, played + chunk_size))
-            jobs = [
-                (index, seed + index, candidate, current, index % 2, iterations, rollout_depth, branch_limit, max_turns)
-                for index in chunk
-            ]
+        while played_board_seeds < board_seed_count:
+            chunk = range(played_board_seeds, min(board_seed_count, played_board_seeds + chunk_size))
+            jobs = []
+            for board_index in chunk:
+                game_seed = seed + board_index
+                if mirrored:
+                    for candidate_player in range(2):
+                        game_index = board_index * 2 + candidate_player
+                        jobs.append(
+                            (
+                                game_index,
+                                game_seed,
+                                candidate,
+                                current,
+                                candidate_player,
+                                iterations,
+                                rollout_depth,
+                                branch_limit,
+                                max_turns,
+                            )
+                        )
+                else:
+                    jobs.append(
+                        (
+                            board_index,
+                            game_seed,
+                            candidate,
+                            current,
+                            board_index % 2,
+                            iterations,
+                            rollout_depth,
+                            branch_limit,
+                            max_turns,
+                        )
+                    )
             outcomes = list(executor.map(_evaluation_job, jobs)) if executor else [_evaluation_job(job) for job in jobs]
             for game_index, result in outcomes:
                 candidate_player = game_index % 2
@@ -687,16 +781,20 @@ def evaluate_candidate(
                 crashes += result["crashes"]
                 total_turns += result["turn_count"]
             played += len(jobs)
+            played_board_seeds += len(chunk)
             # Stop early once the remaining games can no longer change which
             # side has more wins.
-            if played < games and abs(candidate_wins - current_wins) > games - played:
+            if played < target_games and abs(candidate_wins - current_wins) > target_games - played:
                 early_stopped = True
                 break
     finally:
         if executor is not None:
             executor.shutdown()
     return {
+        "requested_games": games,
         "games": played,
+        "board_seeds": played_board_seeds,
+        "mirrored": mirrored,
         "candidate_wins": candidate_wins,
         "current_wins": current_wins,
         "draws": draws,
@@ -740,6 +838,7 @@ def build_eval_report(
         branch_limit=branch_limit,
         max_turns=max_turns,
         workers=workers,
+        mirrored=True,
     )
     return {
         "candidate": str(candidate_path),
@@ -842,14 +941,28 @@ def _play_evaluation_game(
     }
 
 
-def _target_for_position(winner: int | None, final_score: list[int], player_id: int) -> float:
+def _target_for_position(
+    winner: int | None,
+    final_score: list[int],
+    player_id: int,
+    *,
+    move_distance: int = 0,
+) -> float:
     opponent_id = 1 - player_id
-    if winner == player_id:
-        return 1.0
-    if winner == opponent_id:
-        return 0.0
     margin = final_score[player_id] - final_score[opponent_id]
-    return max(0.05, min(0.95, 0.5 + margin / 30.0))
+    margin_target = _clamp_float(0.5 + margin / 24.0, 0.05, 0.95)
+    if winner == player_id:
+        outcome_target = 1.0
+    elif winner == opponent_id:
+        outcome_target = 0.0
+    else:
+        outcome_target = margin_target
+    terminal_weight = 1.0 / (1.0 + max(0, move_distance) / 24.0)
+    return _clamp_float(terminal_weight * outcome_target + (1.0 - terminal_weight) * margin_target, 0.0, 1.0)
+
+
+def _clamp_float(value: float, lower: float, upper: float) -> float:
+    return max(lower, min(upper, value))
 
 
 def _should_accept_candidate(incumbent: ValueNetwork | None, evaluation: dict[str, Any], accept_vp_margin: float) -> bool:
@@ -878,42 +991,190 @@ def _append_game_dataset(path: Path, seed: int, result: GameExamples) -> None:
         "seed": seed,
         "winner": result.winner,
         "final_score": result.final_score,
+        "vp_margin": abs(result.final_score[0] - result.final_score[1]),
         "turn_count": result.turn_count,
         "illegal_actions": result.illegal_actions,
         "crashes": result.crashes,
-        "examples": [_example_to_json(example) for example in result.examples],
+        "policy_distribution_targets": sum(1 for distribution in result.policy_distributions if distribution),
+        "examples": [
+            _example_to_json(
+                example,
+                position_index=index,
+                move_distance=len(result.examples) - index - 1,
+                policy_distribution=(
+                    result.policy_distributions[index]
+                    if index < len(result.policy_distributions)
+                    else None
+                ),
+            )
+            for index, example in enumerate(result.examples)
+        ],
     }
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, separators=(",", ":")) + "\n")
 
 
-def _example_to_json(example: TrainingExample) -> dict[str, Any]:
+def _example_to_json(
+    example: TrainingExample,
+    *,
+    position_index: int | None = None,
+    move_distance: int | None = None,
+    policy_distribution: dict[str, float] | None = None,
+) -> dict[str, Any]:
     features, target, policy_target = _unpack_example(example)
-    return {"features": features, "target": target, "policy_target": policy_target}
+    payload = {"features": features, "target": target, "policy_target": policy_target}
+    if position_index is not None:
+        payload["position_index"] = position_index
+    if move_distance is not None:
+        payload["move_distance"] = move_distance
+    json_distribution = _json_policy_distribution(policy_distribution)
+    if json_distribution is not None:
+        payload["policy_distribution"] = json_distribution
+    return payload
+
+
+def _json_policy_distribution(distribution: dict[str, float] | None) -> dict[str, float] | None:
+    if not distribution:
+        return None
+    cleaned = {
+        str(label): round(float(probability), 6)
+        for label, probability in sorted(distribution.items())
+        if probability > 0.0
+    }
+    return cleaned or None
 
 
 def _load_replay_examples(path: Path, rng: random.Random, limit: int) -> list[TrainingExample]:
     if limit <= 0 or not path.exists():
         return []
-    examples: list[TrainingExample] = []
+    entries: list[ReplayEntry] = []
     try:
         with path.open("r", encoding="utf-8") as handle:
             for line in handle:
                 if not line.strip():
                     continue
                 payload = json.loads(line)
-                if payload.get("board_rule_version") != BOARD_RULE_VERSION:
+                board_rule_version = payload.get("board_rule_version")
+                if board_rule_version is not None and board_rule_version != BOARD_RULE_VERSION:
                     continue
-                for item in payload.get("examples", []):
-                    features = [float(value) for value in item.get("features", [])]
+                raw_examples = payload.get("examples", [])
+                if not isinstance(raw_examples, list):
+                    continue
+                for index, item in enumerate(raw_examples):
+                    if not isinstance(item, dict):
+                        continue
+                    try:
+                        features = [float(value) for value in item.get("features", [])]
+                    except (TypeError, ValueError):
+                        continue
                     if len(features) != len(FEATURE_NAMES):
                         continue
-                    examples.append((features, float(item.get("target", 0.5)), item.get("policy_target")))
+                    raw_policy_target = item.get("policy_target")
+                    policy_target = raw_policy_target if isinstance(raw_policy_target, str) else None
+                    example = (features, _safe_float(item.get("target", 0.5), 0.5), policy_target)
+                    entries.append(
+                        ReplayEntry(
+                            example=example,
+                            priority=_replay_priority(payload, item, features, index, len(raw_examples)),
+                        )
+                    )
     except (OSError, TypeError, ValueError, json.JSONDecodeError):
         return []
-    if len(examples) <= limit:
-        return examples
-    return rng.sample(examples, limit)
+    return _sample_replay_entries(entries, rng, limit)
+
+
+def _sample_replay_entries(entries: list[ReplayEntry], rng: random.Random, limit: int) -> list[TrainingExample]:
+    if len(entries) <= limit:
+        return [entry.example for entry in entries]
+    ranked = []
+    for index, entry in enumerate(entries):
+        priority = max(0.01, entry.priority)
+        key = -math.log(max(rng.random(), 1e-12)) / priority
+        ranked.append((key, index, entry.example))
+    ranked.sort(key=lambda item: (item[0], item[1]))
+    return [example for _, _, example in ranked[:limit]]
+
+
+def _replay_priority(
+    game_payload: dict[str, Any],
+    item: dict[str, Any],
+    features: list[float],
+    position_index: int,
+    position_count: int,
+) -> float:
+    priority = 1.0
+    final_score = game_payload.get("final_score")
+    if isinstance(final_score, list) and len(final_score) >= 2:
+        margin = abs(_safe_float(final_score[0]) - _safe_float(final_score[1]))
+        priority *= 1.0 + _clamp_float((6.0 - margin) / 6.0, 0.0, 1.0)
+
+    high_vp = max(_feature_value(features, "own_total_vp"), _feature_value(features, "opp_total_vp"))
+    priority *= 1.0 + _clamp_float(high_vp, 0.0, 1.0)
+
+    move_distance = item.get("move_distance")
+    if move_distance is None:
+        move_distance = max(0, position_count - position_index - 1)
+    late_weight = 1.0 / (1.0 + max(0.0, _safe_float(move_distance)) / 48.0)
+    priority *= 1.0 + late_weight
+
+    if _metadata_truthy(game_payload, item, "accepted", "candidate_accepted_vs_incumbent"):
+        priority *= 1.35
+    baseline_evaluation = _metadata_value(game_payload, "baseline_evaluation")
+    if _metadata_truthy(game_payload, item, "baseline_gate_passed", "baseline_strong") or _strong_evaluation(
+        baseline_evaluation
+    ):
+        priority *= 1.2
+    return priority
+
+
+def _feature_value(features: list[float], name: str) -> float:
+    try:
+        return float(features[FEATURE_NAMES.index(name)])
+    except (ValueError, IndexError, TypeError):
+        return 0.0
+
+
+def _metadata_truthy(game_payload: dict[str, Any], item: dict[str, Any], *names: str) -> bool:
+    sources = [item, game_payload]
+    for key in ("metadata", "training"):
+        nested = game_payload.get(key)
+        if isinstance(nested, dict):
+            sources.append(nested)
+    for source in sources:
+        for name in names:
+            value = source.get(name)
+            if value is True or value == 1 or (
+                isinstance(value, str) and value.lower() in {"true", "1", "yes", "accepted", "passed"}
+            ):
+                return True
+    return False
+
+
+def _metadata_value(game_payload: dict[str, Any], name: str) -> Any:
+    if name in game_payload:
+        return game_payload[name]
+    for key in ("metadata", "training"):
+        nested = game_payload.get(key)
+        if isinstance(nested, dict) and name in nested:
+            return nested[name]
+    return None
+
+
+def _strong_evaluation(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    candidate_wins = int(_safe_float(value.get("candidate_wins", 0)))
+    current_wins = int(_safe_float(value.get("current_wins", 0)))
+    return candidate_wins > current_wins or (
+        candidate_wins == current_wins and _safe_float(value.get("average_vp_margin", 0.0)) > 0.0
+    )
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _unpack_example(example: TrainingExample) -> tuple[list[float], float, str | None]:
@@ -1014,6 +1275,7 @@ def _evaluate_history(
             branch_limit=branch_limit,
             max_turns=max_turns,
             workers=workers,
+            mirrored=True,
         )
         summary["history_index"] = index
         evaluations.append(summary)
@@ -1174,6 +1436,7 @@ def main(argv: list[str] | None = None) -> int:
             branch_limit=settings["branch_limit"],
             max_turns=settings["max_turns"],
             workers=workers,
+            mirrored=True,
         )
         print(json.dumps(report, indent=2))
         return 0
@@ -1193,6 +1456,7 @@ def main(argv: list[str] | None = None) -> int:
             branch_limit=settings["branch_limit"],
             max_turns=settings["max_turns"],
             workers=workers,
+            mirrored=True,
         )
         print(json.dumps(summary, indent=2))
         return 0

@@ -7,8 +7,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import torch
-import torch.nn.functional as F
+try:
+    import torch
+    import torch.nn.functional as F
+except ImportError:  # PyTorch is required for training, but API serving can use JSON weights directly.
+    torch = None
+    F = None
 
 from catan_engine.actions import Action, ActionType, Phase
 from catan_engine.resources import ALL_RESOURCES, HEX_TO_RESOURCE, Resource, parse_resource
@@ -210,15 +214,16 @@ TrainingExample = tuple[list[float], float] | tuple[list[float], float, str | No
 class ValueNetwork:
     input_size: int
     hidden_size: int
-    hidden_weights: torch.Tensor  # (hidden, input)
-    hidden_bias: torch.Tensor  # (hidden,)
-    output_weights: torch.Tensor  # (hidden,)
-    output_bias: torch.Tensor  # scalar
-    policy_weights: torch.Tensor  # (policy, hidden)
-    policy_bias: torch.Tensor  # (policy,)
+    hidden_weights: Any  # (hidden, input)
+    hidden_bias: Any  # (hidden,)
+    output_weights: Any  # (hidden,)
+    output_bias: Any  # scalar
+    policy_weights: Any  # (policy, hidden)
+    policy_bias: Any  # (policy,)
 
     @classmethod
     def create(cls, input_size: int, hidden_size: int, rng: random.Random) -> "ValueNetwork":
+        _require_torch()
         # Weights are drawn from random.Random so seeded runs stay reproducible.
         scale = 1.0 / math.sqrt(max(1, input_size))
         return cls(
@@ -247,7 +252,7 @@ class ValueNetwork:
             hidden_weights=_tensor_2d(data["hidden_weights"], (hidden_size, int(data["input_size"]))),
             hidden_bias=_tensor_1d(data["hidden_bias"], hidden_size),
             output_weights=_tensor_1d(data["output_weights"], hidden_size),
-            output_bias=torch.tensor(float(data["output_bias"]), dtype=torch.float32),
+            output_bias=_tensor_scalar(data["output_bias"]),
             policy_weights=_normalize_policy_weights(data.get("policy_weights"), hidden_size),
             policy_bias=_normalize_policy_bias(data.get("policy_bias")),
         )
@@ -257,32 +262,62 @@ class ValueNetwork:
             "input_size": self.input_size,
             "hidden_size": self.hidden_size,
             "feature_names": FEATURE_NAMES,
-            "hidden_weights": self.hidden_weights.detach().cpu().tolist(),
-            "hidden_bias": self.hidden_bias.detach().cpu().tolist(),
-            "output_weights": self.output_weights.detach().cpu().tolist(),
-            "output_bias": float(self.output_bias.detach().cpu()),
+            "hidden_weights": _matrix_to_list(self.hidden_weights),
+            "hidden_bias": _vector_to_list(self.hidden_bias),
+            "output_weights": _vector_to_list(self.output_weights),
+            "output_bias": _scalar_to_float(self.output_bias),
             "policy_names": POLICY_NAMES,
-            "policy_weights": self.policy_weights.detach().cpu().tolist(),
-            "policy_bias": self.policy_bias.detach().cpu().tolist(),
+            "policy_weights": _matrix_to_list(self.policy_weights),
+            "policy_bias": _vector_to_list(self.policy_bias),
         }
 
     def predict(self, features: list[float]) -> float:
-        with torch.inference_mode():
-            inputs = self._inputs(features)
-            hidden = self._hidden(inputs)
-            logit = torch.dot(self.output_weights, hidden) + self.output_bias
-            return float(torch.sigmoid(logit))
+        if _has_torch_weights(self.hidden_weights):
+            with torch.inference_mode():
+                inputs = self._inputs(features)
+                hidden = self._hidden(inputs)
+                logit = torch.dot(self.output_weights, hidden) + self.output_bias
+                return float(torch.sigmoid(logit))
+        hidden_values = self._hidden_values(features)
+        logit = _dot(_vector_to_list(self.output_weights), hidden_values) + _scalar_to_float(self.output_bias)
+        return _sigmoid(logit)
+
+    def predict_batch(self, features_batch: list[list[float]]) -> list[float]:
+        if not features_batch:
+            return []
+        for features in features_batch:
+            if len(features) != self.input_size:
+                raise ValueError(f"expected {self.input_size} features, got {len(features)}")
+        if _has_torch_weights(self.hidden_weights):
+            with torch.inference_mode():
+                inputs = torch.tensor(features_batch, dtype=torch.float32)
+                hidden = self._hidden(inputs)
+                logits = F.linear(hidden, self.output_weights.unsqueeze(0), self.output_bias.reshape(1)).squeeze(-1)
+                return torch.sigmoid(logits).detach().cpu().tolist()
+        return [self.predict(features) for features in features_batch]
 
     def predict_state(self, state: GameState, player_id: int) -> float:
         return self.predict(extract_state_features(state, player_id))
 
+    def predict_states(self, states: list[GameState], player_id: int) -> list[float]:
+        return self.predict_batch([extract_state_features(state, player_id) for state in states])
+
     def predict_policy(self, features: list[float]) -> dict[str, float]:
-        with torch.inference_mode():
-            inputs = self._inputs(features)
-            hidden = self._hidden(inputs)
-            logits = F.linear(hidden, self.policy_weights, self.policy_bias)
-            probabilities = torch.softmax(logits, dim=0)
-            return dict(zip(POLICY_NAMES, probabilities.detach().cpu().tolist(), strict=True))
+        if _has_torch_weights(self.hidden_weights):
+            with torch.inference_mode():
+                inputs = self._inputs(features)
+                hidden = self._hidden(inputs)
+                logits = F.linear(hidden, self.policy_weights, self.policy_bias)
+                probabilities = torch.softmax(logits, dim=0)
+                return dict(zip(POLICY_NAMES, probabilities.detach().cpu().tolist(), strict=True))
+        hidden_values = self._hidden_values(features)
+        policy_bias = _vector_to_list(self.policy_bias)
+        logits = [
+            _dot(row, hidden_values) + policy_bias[index]
+            for index, row in enumerate(_matrix_to_list(self.policy_weights))
+        ]
+        probabilities = _softmax(logits)
+        return dict(zip(POLICY_NAMES, probabilities, strict=True))
 
     def train(
         self,
@@ -294,6 +329,7 @@ class ValueNetwork:
         rng: random.Random,
         policy_loss_weight: float = 0.15,
     ) -> dict[str, float]:
+        _require_torch()
         if not examples:
             return {
                 "loss_before": 0.0,
@@ -344,10 +380,12 @@ class ValueNetwork:
         }
 
     def loss(self, examples: list[TrainingExample], *, policy_loss_weight: float = 0.15) -> float:
+        _require_torch()
         value_loss, policy_loss = self.loss_parts(examples)
         return value_loss + policy_loss_weight * policy_loss
 
     def loss_parts(self, examples: list[TrainingExample]) -> tuple[float, float]:
+        _require_torch()
         if not examples:
             return 0.0, 0.0
         device = _training_device()
@@ -375,15 +413,25 @@ class ValueNetwork:
                     )
         return value_total / len(examples), policy_total / policy_count if policy_count else 0.0
 
-    def _inputs(self, features: list[float]) -> torch.Tensor:
+    def _inputs(self, features: list[float]) -> Any:
+        _require_torch()
         if len(features) != self.input_size:
             raise ValueError(f"expected {self.input_size} features, got {len(features)}")
         return torch.tensor(features, dtype=torch.float32)
 
-    def _hidden(self, inputs: torch.Tensor) -> torch.Tensor:
+    def _hidden(self, inputs: Any) -> Any:
+        _require_torch()
         return torch.tanh(F.linear(inputs, self.hidden_weights, self.hidden_bias))
 
+    def _hidden_values(self, features: list[float]) -> list[float]:
+        if len(features) != self.input_size:
+            raise ValueError(f"expected {self.input_size} features, got {len(features)}")
+        hidden_weights = _matrix_to_list(self.hidden_weights)
+        hidden_bias = _vector_to_list(self.hidden_bias)
+        return [math.tanh(_dot(row, features) + hidden_bias[index]) for index, row in enumerate(hidden_weights)]
+
     def _copy_from_module(self, module: "_TorchValuePolicy") -> None:
+        _require_torch()
         module = module.to("cpu")
         self.hidden_weights = module.hidden.weight.detach().clone()
         self.hidden_bias = module.hidden.bias.detach().clone()
@@ -393,28 +441,37 @@ class ValueNetwork:
         self.policy_bias = module.policy.bias.detach().clone()
 
 
-class _TorchValuePolicy(torch.nn.Module):
-    def __init__(self, input_size: int, hidden_size: int) -> None:
-        super().__init__()
-        self.hidden = torch.nn.Linear(input_size, hidden_size)
-        self.value = torch.nn.Linear(hidden_size, 1)
-        self.policy = torch.nn.Linear(hidden_size, len(POLICY_NAMES))
+if torch is not None:
 
-    @classmethod
-    def from_network(cls, network: ValueNetwork) -> "_TorchValuePolicy":
-        module = cls(network.input_size, network.hidden_size)
-        with torch.no_grad():
-            module.hidden.weight.copy_(network.hidden_weights.float())
-            module.hidden.bias.copy_(network.hidden_bias.float())
-            module.value.weight.copy_(network.output_weights.float().unsqueeze(0))
-            module.value.bias.copy_(network.output_bias.float().reshape(1))
-            module.policy.weight.copy_(network.policy_weights.float())
-            module.policy.bias.copy_(network.policy_bias.float())
-        return module
+    class _TorchValuePolicy(torch.nn.Module):
+        def __init__(self, input_size: int, hidden_size: int) -> None:
+            super().__init__()
+            self.hidden = torch.nn.Linear(input_size, hidden_size)
+            self.value = torch.nn.Linear(hidden_size, 1)
+            self.policy = torch.nn.Linear(hidden_size, len(POLICY_NAMES))
 
-    def forward(self, features: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        hidden = torch.tanh(self.hidden(features))
-        return self.value(hidden).squeeze(-1), self.policy(hidden)
+        @classmethod
+        def from_network(cls, network: ValueNetwork) -> "_TorchValuePolicy":
+            module = cls(network.input_size, network.hidden_size)
+            with torch.no_grad():
+                module.hidden.weight.copy_(network.hidden_weights.float())
+                module.hidden.bias.copy_(network.hidden_bias.float())
+                module.value.weight.copy_(network.output_weights.float().unsqueeze(0))
+                module.value.bias.copy_(network.output_bias.float().reshape(1))
+                module.policy.weight.copy_(network.policy_weights.float())
+                module.policy.bias.copy_(network.policy_bias.float())
+            return module
+
+        def forward(self, features: Any) -> tuple[Any, Any]:
+            hidden = torch.tanh(self.hidden(features))
+            return self.value(hidden).squeeze(-1), self.policy(hidden)
+
+else:
+
+    class _TorchValuePolicy:
+        @classmethod
+        def from_network(cls, network: ValueNetwork) -> "_TorchValuePolicy":
+            raise RuntimeError("PyTorch is required for model training")
 
 
 def load_value_network(path: str | Path | None = None, *, require_serving_ready: bool = False) -> ValueNetwork | None:
@@ -738,17 +795,21 @@ def _unpack_example(example: TrainingExample) -> tuple[list[float], float, str |
 
 
 def torch_device_name() -> str:
+    if torch is None:
+        return "torch-unavailable"
     return str(_training_device())
 
 
-def _training_device() -> torch.device:
+def _training_device() -> Any:
+    _require_torch()
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def _examples_to_tensors(
     examples: list[TrainingExample],
-    device: torch.device,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    device: Any,
+) -> tuple[Any, Any, Any]:
+    _require_torch()
     features: list[list[float]] = []
     targets: list[float] = []
     policy_targets: list[int] = []
@@ -764,7 +825,25 @@ def _examples_to_tensors(
     )
 
 
-def _tensor_1d(values: Any, size: int) -> torch.Tensor:
+def _tensor_scalar(value: Any) -> Any:
+    try:
+        scalar = float(value)
+    except (TypeError, ValueError):
+        scalar = 0.0
+    if torch is None:
+        return scalar
+    return torch.tensor(scalar, dtype=torch.float32)
+
+
+def _tensor_1d(values: Any, size: int) -> Any:
+    if torch is None:
+        try:
+            vector = [float(value) for value in values]
+        except (TypeError, ValueError):
+            vector = [0.0] * size
+        if len(vector) != size:
+            return [0.0] * size
+        return vector
     try:
         tensor = torch.tensor(values, dtype=torch.float32)
     except (TypeError, ValueError):
@@ -774,7 +853,16 @@ def _tensor_1d(values: Any, size: int) -> torch.Tensor:
     return tensor
 
 
-def _tensor_2d(values: Any, shape: tuple[int, int]) -> torch.Tensor:
+def _tensor_2d(values: Any, shape: tuple[int, int]) -> Any:
+    if torch is None:
+        rows, cols = shape
+        try:
+            matrix = [[float(value) for value in row] for row in values]
+        except (TypeError, ValueError):
+            matrix = [[0.0 for _ in range(cols)] for _ in range(rows)]
+        if len(matrix) != rows or any(len(row) != cols for row in matrix):
+            return [[0.0 for _ in range(cols)] for _ in range(rows)]
+        return matrix
     try:
         tensor = torch.tensor(values, dtype=torch.float32)
     except (TypeError, ValueError):
@@ -784,9 +872,61 @@ def _tensor_2d(values: Any, shape: tuple[int, int]) -> torch.Tensor:
     return tensor
 
 
-def _normalize_policy_weights(values: Any, hidden_size: int) -> torch.Tensor:
+def _normalize_policy_weights(values: Any, hidden_size: int) -> Any:
     return _tensor_2d(values, (len(POLICY_NAMES), hidden_size))
 
 
-def _normalize_policy_bias(values: Any) -> torch.Tensor:
+def _normalize_policy_bias(values: Any) -> Any:
     return _tensor_1d(values, len(POLICY_NAMES))
+
+
+def _require_torch() -> None:
+    if torch is None or F is None:
+        raise RuntimeError("PyTorch is required for model training; install requirements.txt locally.")
+
+
+def _has_torch_weights(value: Any) -> bool:
+    return torch is not None and hasattr(value, "detach")
+
+
+def _vector_to_list(values: Any) -> list[float]:
+    if _has_torch_weights(values):
+        return [float(value) for value in values.detach().cpu().tolist()]
+    if isinstance(values, (int, float)):
+        return [float(values)]
+    return [float(value) for value in values]
+
+
+def _matrix_to_list(values: Any) -> list[list[float]]:
+    if _has_torch_weights(values):
+        return [[float(value) for value in row] for row in values.detach().cpu().tolist()]
+    return [[float(value) for value in row] for row in values]
+
+
+def _scalar_to_float(value: Any) -> float:
+    if _has_torch_weights(value):
+        return float(value.detach().cpu())
+    return float(value)
+
+
+def _dot(left: list[float], right: list[float]) -> float:
+    return sum(a * b for a, b in zip(left, right, strict=True))
+
+
+def _sigmoid(value: float) -> float:
+    if value >= 0:
+        z = math.exp(-value)
+        return 1.0 / (1.0 + z)
+    z = math.exp(value)
+    return z / (1.0 + z)
+
+
+def _softmax(values: list[float]) -> list[float]:
+    if not values:
+        return []
+    peak = max(values)
+    exps = [math.exp(value - peak) for value in values]
+    total = sum(exps)
+    if total <= 0.0:
+        return [1.0 / len(values) for _ in values]
+    return [value / total for value in exps]

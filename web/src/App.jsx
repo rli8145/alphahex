@@ -12,6 +12,7 @@ import { actionLabel, BOT_ID, HUMAN_ID, logLine, PLAYER_NAMES, resourceGainLines
 
 const BOT_THINK_DELAY_MS = 900;
 const BOT_REVEAL_DELAY_MS = 700;
+const BOT_VERSION_POLL_MS = 30_000;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Placement actions ask for a confirmation before being applied.
@@ -36,6 +37,7 @@ export default function App() {
   const [actionMode, setActionMode] = useState(null); // armed board action (build/knight/road-building)
   const [roadFirst, setRoadFirst] = useState(null); // first edge picked for Road Building
   const [botStatus, setBotStatus] = useState(null);
+  const [botVersion, setBotVersion] = useState(null);
   const [payoutFx, setPayoutFx] = useState(null); // { number, fxId } — retriggers the dice payout flash
 
   const startedRef = useRef(false);
@@ -131,6 +133,24 @@ export default function App() {
     startedRef.current = true;
     startNewGame();
   }, [startNewGame]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function refreshBotVersion() {
+      try {
+        const version = await api.botVersion();
+        if (!cancelled) setBotVersion(version);
+      } catch {
+        if (!cancelled) setBotVersion(null);
+      }
+    }
+    refreshBotVersion();
+    const interval = setInterval(refreshBotVersion, BOT_VERSION_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
 
   const handleAction = useCallback(
     async (action) => {
@@ -345,6 +365,16 @@ export default function App() {
           <div className="panel topbar">
             <span className="turn-indicator">
               <strong>{PLAYER_NAMES[state.current_player]}</strong> to move
+            </span>
+            <span
+              className={`bot-version ${botVersion?.serving_ready ? "neural" : "heuristic"}`}
+              title={
+                botVersion
+                  ? `Bot version ${botVersion.version}${botVersion.updated_at ? `, updated ${botVersion.updated_at}` : ""}`
+                  : "Bot version unavailable"
+              }
+            >
+              {botVersion?.active_model === "neural" ? "NN" : "Heuristic"} · {botVersion?.version ?? "checking"}
             </span>
             <button className="btn-secondary" onClick={startNewGame} disabled={busy}>
               New game

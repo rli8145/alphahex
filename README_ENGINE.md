@@ -12,9 +12,15 @@ $env:PYTHONPATH='packages/engine;packages/bots;packages/api'
 
 ```powershell
 python -c "from catan_engine import initialize_game, get_legal_actions; s=initialize_game(seed=0); print(s.phase.name, len(get_legal_actions(s)))"
+python -m catan_engine.validation
 python -m catan_engine.simulator --bot-a mcts --bot-b mcts --games 1 --seed 0 --no-replay
 python -c "from fastapi.testclient import TestClient; from catan_api.app import app; c=TestClient(app); print(c.get('/health').json())"
 ```
+
+`python -m catan_engine.validation` runs deterministic engine correctness smoke
+checks for setup resource payout, robber and friendly robber behavior, dev-card
+timing, ports, discard flow, and longest road. It uses in-memory states only and
+does not write replay artifacts.
 
 ## Train Baseline MCTS Weights
 
@@ -62,6 +68,12 @@ random attempts by reducing same-resource clustering and resource production
 imbalance.
 
 ## Train MCTS-NN
+
+Install the training extras before running neural training:
+
+```powershell
+python -m pip install -r requirements-training.txt
+```
 
 The MCTS-NN layer is a small neural value/policy network. The value head predicts
 win probability from encoded game-state features. The policy head predicts the

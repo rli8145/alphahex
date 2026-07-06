@@ -15,6 +15,16 @@ async function post(path, body) {
   return res.json();
 }
 
+async function get(path) {
+  const res = await fetch(`${BASE}${path}`);
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`${path} failed (${res.status}): ${text}`);
+  }
+  return res.json();
+}
+
 export const newGame = (seed = 0) => post("/games/new", { seed });
 export const applyAction = (state, action) => post("/games/action", { state, action });
 export const botStep = (state) => post("/games/bot-step", { state });
+export const botVersion = () => get("/bots/version");
