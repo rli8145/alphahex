@@ -16,6 +16,7 @@ jobs:
     env:
       VERCEL_ORG_ID: team_4eYNBUF6m5N5f08gV6fyFTvm
       VERCEL_PROJECT_ID: prj_W3Ydw7izWZFxDwsBmrCXHMftPv24
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -25,5 +26,12 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
+      - name: Check Vercel token
+        run: |
+          if [ -z "$VERCEL_TOKEN" ]; then
+            echo "::error::Add a GitHub Actions secret named VERCEL_TOKEN before auto-deploy can run from GitHub."
+            exit 1
+          fi
+
       - name: Deploy to Vercel
-        run: npx vercel deploy --prod --yes --token="${{ secrets.VERCEL_TOKEN }}"
+        run: npx vercel deploy --prod --yes --token="$VERCEL_TOKEN"
