@@ -64,7 +64,7 @@ state --> get_legal_actions --> MCTS / PUCT --> apply_action
 
 MODEL EVALUATION  (mixed heuristic + neural guidance)
 -----------------------------------------------------
-GameState --> 95-feature encoder --> numpy value-policy network
+GameState --> 95-feature encoder --> PyTorch value-policy network
                                       |
                                       +-- value head: win probability
                                       +-- policy head: 522 exact-action labels
@@ -94,6 +94,6 @@ self-play games --> JSONL replay buffer --> SGD training
                                     website bot hot reloads
 ```
 
-The NN is lightweight with only 95 state features (production per resource, expansion potential, longest-road threat, robber exposure, tactical targets like "best available settlement spot", resource counts, phase one-hots) feeding one 64-unit tanh hidden layer with two heads - a sigmoid **value head** trained with MSE to predict win probability, and a softmax **policy head** over 522 exact-action labels (e.g. `BUILD_ROAD:edge:17`) trained with cross-entropy loss at 0.15 weight. Plain numpy SGD with L2; checkpoints are JSON.
+The NN is lightweight with only 95 state features (production per resource, expansion potential, longest-road threat, robber exposure, tactical targets like "best available settlement spot", resource counts, phase one-hots) feeding one tanh hidden layer with two heads - a sigmoid **value head** trained with MSE to predict win probability, and a softmax **policy head** over 522 exact-action labels (e.g. `BUILD_ROAD:edge:17`) trained with cross-entropy loss at 0.15 weight. Training uses PyTorch/AdamW in batches, with CUDA when available; checkpoints stay JSON for easy serving and review.
 
 Training (`train_mcts_nn.py`) is a self-play loop: play games in parallel, label every recorded position with the final outcome (unfinished games get VP-margin pseudo-labels), train a candidate on the new games plus samples from a replay buffer, then gate acceptance - the candidate must beat the current checkpoint and also beat the heuristic-only MCTS baseline over up to 20 evaluation games (early-stopped once decided) before it is marked serving-ready. Accepted checkpoints join a history pool that self-play occasionally samples opponents from, which guards against overfitting to self. The web server hot-reloads only serving-ready live checkpoints; otherwise it falls back to heuristic MCTS.

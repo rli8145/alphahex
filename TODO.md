@@ -75,7 +75,7 @@ Ordered by expected impact on bot strength per hour of work.
 - [x] Add chart-friendly CSV export for long training runs (`data/training/logs/train_metrics.csv`, one row per cycle).
 - [x] Add periodic pruning/compaction for very large `data/training/selfplay.jsonl` files (`--dataset-max-games`, default 4000 newest games).
 - [x] Add learning-rate decay across continuous training cycles (`--lr-decay`, default 0.995 per cycle).
-- [x] Port `ValueNetwork` forward/backward passes to numpy (2026-07-06): profiling after the caching fix showed the pure-Python hidden layer was still ~22% of self-play time; numpy cut `predict` from ~615us to ~4us and `predict_policy` from ~5.3ms to ~28us per call. Checkpoints remain plain JSON.
+- [x] Port `ValueNetwork` forward/backward passes to PyTorch (2026-07-06): training now uses batched AdamW on CUDA when available, while checkpoints remain plain JSON and the MCTS/runtime API stays unchanged.
 
 ## Training Math
 

@@ -22,6 +22,7 @@ from catan_bots.value_network import (
     extract_state_features,
     load_value_network,
     save_value_network,
+    torch_device_name,
 )
 from catan_engine.actions import IllegalActionError, Phase
 from catan_engine.rules import apply_action, get_legal_actions, is_legal_action
@@ -57,7 +58,7 @@ PROFILE_DEFAULTS = {
     },
     "offline": {
         "games": 12,
-        "hidden_size": 64,
+        "hidden_size": 128,
         "epochs": 4,
         "learning_rate": 0.015,
         "l2": 0.0001,
@@ -311,6 +312,8 @@ def train(
         "randomized_boards": True,
         "board_rule_version": BOARD_RULE_VERSION,
         "policy_head": True,
+        "ml_framework": "torch",
+        "torch_device": torch_device_name(),
         "replay_dataset": str(dataset_path) if dataset_path is not None else None,
         "history_opponents": len(history_networks),
         "wins_by_player": {"0": wins[0], "1": wins[1], "draw": wins["draw"]},
