@@ -2,6 +2,19 @@
 
 This file tracks concrete work for the 1v1 Catan simulator, web client, and MCTS-NN bot.
 
+## Next Steps (July 2026)
+
+Ordered by expected impact on bot strength per hour of work.
+
+- [x] Cache per-state NN work in `_action_value` (`packages/bots/catan_bots/mcts_bot.py`): the policy distribution is now computed once per state (`_policy_probs`) and shared across candidate actions (2026-07-06).
+- [x] Deduplicate `_settlement_potential`/`_expansion_count`, longest-road, and per-resource production sweeps inside `extract_state_features` — each is now computed once per call (2026-07-06).
+- [x] Raise `eval_games` to 20 with an early stop once the win lead exceeds the remaining games (2026-07-06).
+- [x] Use the policy prior inside tree selection (PUCT-style: `Q + c * prior * sqrt(N) / (1 + n)`), with priors normalized over the candidate set and highest-prior actions expanded first (2026-07-06).
+- [x] Add parallel self-play and evaluation workers (`--workers`, default auto = cpu count - 1) (2026-07-06).
+- [x] Play 2 games per history opponent in `_evaluate_history` (2026-07-06).
+- [ ] Gate the live website checkpoint on also beating the heuristic-only baseline: the first accepted NN checkpoint lost 0-11 to the heuristic MCTS in evaluation, yet still became `mcts_value_network.json`, which the web bot mixes into its rewards at 70%. Until the NN beats the baseline, serving no network would play stronger.
+- [x] Retune training parameters (2026-07-06): offline profile `iterations` 6→12 (benchmark showed stronger play ends games in fewer turns, so wall time per game is nearly unchanged), `games` 6→12 (parallel workers amortize it), `eval_games` 6→20 (with early stop), `buffer_samples` 2000→3000; `--accept-vp-margin` default -0.25→0.0 so tied-win candidates need a non-negative VP margin; `train_mcts.py` defaults `candidates` 2→4, `games-per-candidate` 2→6, `iterations`/`rollout-depth` 2→4, `branch-limit` 4→6 (at the old depth most games hit the 200-turn cap unfinished; heuristic games cost only ~5s each at the new depth).
+
 ## Gameplay UI
 
 - [x] Show resource-gain events clearly in the action log.
@@ -13,8 +26,8 @@ This file tracks concrete work for the 1v1 Catan simulator, web client, and MCTS
 - [x] Warn when a player has 10 or more resource cards and may need to discard on a 7.
 - [x] Replace remaining emoji UI with custom token-style icons.
 - [x] Add visible delays/status messages between bot actions so players can follow the bot turn.
-- [ ] Add board animations for dice payouts and robber movement.
-- [ ] Add a compact game summary panel for VP, production, and longest-road pressure.
+- [x] Add board animations for dice payouts (matching hexes flash after a roll) and robber movement (the robber slides between hexes).
+- [x] Add a compact game summary panel for VP, production, and longest-road pressure.
 
 ## Bot Strength Roadmap
 
@@ -28,7 +41,7 @@ This file tracks concrete work for the 1v1 Catan simulator, web client, and MCTS
 - [x] Use larger MCTS search budgets for training and evaluation.
 - [x] Keep a capped search budget for the website bot so play remains responsive.
 - [x] Add richer exact-action policy targets, not only action-type policy targets.
-- [ ] Add parallel self-play workers once single-process training is stable.
+- [x] Add parallel self-play workers once single-process training is stable.
 
 ## Feature Engineering
 
@@ -41,7 +54,7 @@ This file tracks concrete work for the 1v1 Catan simulator, web client, and MCTS
 - [x] Add port usefulness features based on actual production.
 - [x] Add robber-impact features for both players.
 - [x] Add immediate tactical win/block features.
-- [ ] Add action-specific tactical features for exact road, city, settlement, and robber targets.
+- [x] Add action-specific tactical features for exact road, city, settlement, and robber targets (best settlement spot, best city spot, best road target, best robber gain for both players).
 
 ## Training Quality
 
@@ -57,10 +70,12 @@ This file tracks concrete work for the 1v1 Catan simulator, web client, and MCTS
 - [x] Move continuous training logs under `data/training/logs/` instead of the temp folder.
 - [x] Improve random board selection with a simple fairness score for resource clustering and production balance.
 - [x] Stop tracking generated training artifacts; keep `data/training/.gitkeep`, ignore `selfplay.jsonl`, `leaderboard.json`, checkpoint history, and local model JSON files.
-- [ ] Let the first exact-policy continuous training cycle finish and record whether the candidate checkpoint was accepted.
+- [x] Let the first exact-policy training cycles finish and record the result (2026-07-06, new tactical-feature pipeline, offline profile): cycle 1 bootstrapped a fresh network (auto-accepted, no incumbent) but lost 0-11 to the heuristic-only baseline before eval early-stopped; cycle 2's candidate was **rejected** 8-9 (3 draws, +0.05 VP margin) against the cycle-1 incumbent over the full 20 eval games. Value loss fell 0.24→0.049 across the two cycles; zero illegal actions or crashes.
 - [x] Add a readable eval report command for win rate, VP margin, average turns, illegal actions, crashes, and checkpoint comparison.
-- [ ] Add chart-friendly CSV export for long training runs.
-- [ ] Add periodic pruning/compaction for very large `data/training/selfplay.jsonl` files.
+- [x] Add chart-friendly CSV export for long training runs (`data/training/logs/train_metrics.csv`, one row per cycle).
+- [x] Add periodic pruning/compaction for very large `data/training/selfplay.jsonl` files (`--dataset-max-games`, default 4000 newest games).
+- [x] Add learning-rate decay across continuous training cycles (`--lr-decay`, default 0.995 per cycle).
+- [x] Port `ValueNetwork` forward/backward passes to numpy (2026-07-06): profiling after the caching fix showed the pure-Python hidden layer was still ~22% of self-play time; numpy cut `predict` from ~615us to ~4us and `predict_policy` from ~5.3ms to ~28us per call. Checkpoints remain plain JSON.
 
 ## Training Math
 
