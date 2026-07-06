@@ -381,18 +381,34 @@ class ValueNetwork:
         self.hidden_bias -= learning_rate * d_hidden
 
 
-def load_value_network(path: str | Path | None = None) -> ValueNetwork | None:
+def load_value_network(path: str | Path | None = None, *, require_serving_ready: bool = False) -> ValueNetwork | None:
     target = Path(path) if path is not None else DEFAULT_VALUE_NETWORK_PATH
     if not target.exists():
         return None
     try:
         data = json.loads(target.read_text(encoding="utf-8"))
+        if require_serving_ready and not _checkpoint_data_serving_ready(data):
+            return None
         network = ValueNetwork.from_dict(data["network"])
         if network.input_size != len(FEATURE_NAMES):
             return None
         return network
     except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
         return None
+
+
+def checkpoint_serving_ready(path: str | Path | None = None) -> bool:
+    target = Path(path) if path is not None else DEFAULT_VALUE_NETWORK_PATH
+    try:
+        data = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, TypeError, json.JSONDecodeError):
+        return False
+    return _checkpoint_data_serving_ready(data)
+
+
+def _checkpoint_data_serving_ready(data: dict[str, Any]) -> bool:
+    training = data.get("training", {})
+    return isinstance(training, dict) and bool(training.get("serving_ready"))
 
 
 def save_value_network(

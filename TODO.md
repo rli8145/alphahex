@@ -12,7 +12,7 @@ Ordered by expected impact on bot strength per hour of work.
 - [x] Use the policy prior inside tree selection (PUCT-style: `Q + c * prior * sqrt(N) / (1 + n)`), with priors normalized over the candidate set and highest-prior actions expanded first (2026-07-06).
 - [x] Add parallel self-play and evaluation workers (`--workers`, default auto = cpu count - 1) (2026-07-06).
 - [x] Play 2 games per history opponent in `_evaluate_history` (2026-07-06).
-- [ ] Gate the live website checkpoint on also beating the heuristic-only baseline: the first accepted NN checkpoint lost 0-11 to the heuristic MCTS in evaluation, yet still became `mcts_value_network.json`, which the web bot mixes into its rewards at 70%. Until the NN beats the baseline, serving no network would play stronger.
+- [x] Gate the live website checkpoint on also beating the heuristic-only baseline: serving now only loads checkpoints marked `serving_ready`, and training marks a candidate serving-ready only after it passes both the incumbent gate and the heuristic-only baseline gate (2026-07-06).
 - [x] Retune training parameters (2026-07-06): offline profile `iterations` 6→12 (benchmark showed stronger play ends games in fewer turns, so wall time per game is nearly unchanged), `games` 6→12 (parallel workers amortize it), `eval_games` 6→20 (with early stop), `buffer_samples` 2000→3000; `--accept-vp-margin` default -0.25→0.0 so tied-win candidates need a non-negative VP margin; `train_mcts.py` defaults `candidates` 2→4, `games-per-candidate` 2→6, `iterations`/`rollout-depth` 2→4, `branch-limit` 4→6 (at the old depth most games hit the 200-turn cap unfinished; heuristic games cost only ~5s each at the new depth).
 
 ## Gameplay UI

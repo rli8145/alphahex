@@ -18,6 +18,7 @@ from catan_bots.value_network import (
     TrainingExample,
     ValueNetwork,
     action_policy_label,
+    checkpoint_serving_ready,
     extract_state_features,
     load_value_network,
     save_value_network,
@@ -142,6 +143,7 @@ def train(
 ) -> dict[str, Any]:
     rng = random.Random(seed)
     incumbent = load_value_network(output) if resume else None
+    incumbent_serving_ready = checkpoint_serving_ready(output) if resume else False
     base_network = incumbent or ValueNetwork.create(len(FEATURE_NAMES), hidden_size, rng)
     history_networks = _load_history_networks(history_dir, limit=history_opponents)
 
@@ -231,6 +233,35 @@ def train(
         workers=workers,
     )
     _log_progress(progress, cycle=cycle, stage="evaluation", status="finished", evaluation=evaluation)
+    if incumbent is None:
+        baseline_evaluation = evaluation
+    else:
+        _log_progress(
+            progress,
+            cycle=cycle,
+            stage="baseline_evaluation",
+            status="started",
+            games=eval_games,
+            workers=workers,
+        )
+        baseline_evaluation = evaluate_candidate(
+            candidate=candidate,
+            current=None,
+            seed=seed + 625_000,
+            games=eval_games,
+            iterations=iterations,
+            rollout_depth=rollout_depth,
+            branch_limit=branch_limit,
+            max_turns=max_turns,
+            workers=workers,
+        )
+        _log_progress(
+            progress,
+            cycle=cycle,
+            stage="baseline_evaluation",
+            status="finished",
+            evaluation=baseline_evaluation,
+        )
     _log_progress(
         progress,
         cycle=cycle,
@@ -255,8 +286,12 @@ def train(
         status="finished",
         evaluations=history_evaluations,
     )
-    accepted = _should_accept_candidate(incumbent, evaluation, accept_vp_margin)
+    candidate_accepted_vs_incumbent = _should_accept_candidate(incumbent, evaluation, accept_vp_margin)
+    baseline_gate_passed = _evaluation_passes(baseline_evaluation, accept_vp_margin)
+    accepted = candidate_accepted_vs_incumbent and baseline_gate_passed
     network_to_save = candidate if accepted else base_network
+    saved_network = "candidate" if accepted else "incumbent" if incumbent is not None else "bootstrap"
+    saved_serving_ready = accepted or (incumbent is not None and incumbent_serving_ready)
 
     metadata = {
         "seed": seed,
@@ -283,7 +318,12 @@ def train(
         "illegal_actions": illegal_actions,
         "crashes": crashes,
         "accepted": accepted,
+        "candidate_accepted_vs_incumbent": candidate_accepted_vs_incumbent,
+        "baseline_gate_passed": baseline_gate_passed,
+        "serving_ready": saved_serving_ready,
+        "saved_network": saved_network,
         "evaluation": evaluation,
+        "baseline_evaluation": baseline_evaluation,
         "history_evaluations": history_evaluations,
         **training_stats,
     }
@@ -297,6 +337,7 @@ def train(
             "accepted": accepted,
             "score": _leaderboard_score(evaluation),
             "evaluation": evaluation,
+            "baseline_evaluation": baseline_evaluation,
             "examples": len(training_examples),
             "loss_after": metadata["loss_after"],
             "policy_loss_after": metadata.get("policy_loss_after", 0.0),
@@ -335,6 +376,8 @@ def train(
         stage="checkpoint",
         status="saved",
         accepted=accepted,
+        baseline_gate_passed=baseline_gate_passed,
+        serving_ready=saved_serving_ready,
         checkpoint=str(checkpoint),
         history_checkpoint=str(history_checkpoint) if history_checkpoint else None,
         wins_by_player=metadata["wins_by_player"],
@@ -432,6 +475,8 @@ def train_continuously(
                     "loss_after": summary["loss_after"],
                     "policy_loss_after": summary.get("policy_loss_after"),
                     "evaluation": summary["evaluation"],
+                    "baseline_evaluation": summary["baseline_evaluation"],
+                    "baseline_gate_passed": summary["baseline_gate_passed"],
                     "wins_by_player": summary["wins_by_player"],
                     "illegal_actions": summary["illegal_actions"],
                     "crashes": summary["crashes"],
@@ -805,8 +850,14 @@ def _target_for_position(winner: int | None, final_score: list[int], player_id: 
 
 
 def _should_accept_candidate(incumbent: ValueNetwork | None, evaluation: dict[str, Any], accept_vp_margin: float) -> bool:
-    if incumbent is None or evaluation["games"] == 0:
+    if incumbent is None:
         return True
+    return _evaluation_passes(evaluation, accept_vp_margin)
+
+
+def _evaluation_passes(evaluation: dict[str, Any], accept_vp_margin: float) -> bool:
+    if evaluation["games"] == 0:
+        return False
     if evaluation["crashes"] > 0:
         return False
     if evaluation["candidate_wins"] > evaluation["current_wins"]:

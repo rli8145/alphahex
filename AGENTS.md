@@ -11,8 +11,6 @@ Keep the project in a single root-level layout:
 - `packages/bots/`: bot interface plus the single supported `MCTSBot`.
 - `packages/api/`: FastAPI app and API routes.
 - `data/replays/`: runtime replay output directory.
-- `README_ENGINE.md`: backend setup, architecture, and usage notes.
-
 Do not recreate a nested project directory such as `catan-1v1-bot/`. There should
 be only one `packages/` tree, at the repository root.
 
@@ -24,7 +22,6 @@ Backend work should stay in:
 - `packages/bots/`
 - `packages/api/`
 - `data/replays/`
-- `README_ENGINE.md`
 - `AGENTS.md`
 
 Avoid unrelated edits to root `README.md`, frontend/training docs, deployment

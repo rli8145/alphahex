@@ -109,7 +109,12 @@ class MCTSBot(Bot):
         self.exploration = exploration
         self.branch_limit = branch_limit
         self.weights = weights or load_trained_weights()
-        self.value_network = value_network if value_network is not None else load_value_network() if use_value_network else None
+        if value_network is not None:
+            self.value_network = value_network
+        elif use_value_network:
+            self.value_network = load_value_network(require_serving_ready=True)
+        else:
+            self.value_network = None
         self._reload_value_network = value_network is None and use_value_network
         self._value_network_mtime = _checkpoint_mtime(DEFAULT_VALUE_NETWORK_PATH)
 
@@ -174,10 +179,8 @@ class MCTSBot(Bot):
         mtime = _checkpoint_mtime(DEFAULT_VALUE_NETWORK_PATH)
         if mtime is None or mtime == self._value_network_mtime:
             return
-        loaded = load_value_network(DEFAULT_VALUE_NETWORK_PATH)
-        if loaded is not None:
-            self.value_network = loaded
-            self._value_network_mtime = mtime
+        self.value_network = load_value_network(DEFAULT_VALUE_NETWORK_PATH, require_serving_ready=True)
+        self._value_network_mtime = mtime
 
 
 @dataclass
