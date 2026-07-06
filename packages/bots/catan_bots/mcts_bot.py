@@ -7,7 +7,13 @@ from pathlib import Path
 from typing import Any
 
 from catan_bots.base import Bot
-from catan_bots.value_network import DEFAULT_VALUE_NETWORK_PATH, ValueNetwork, extract_state_features, load_value_network
+from catan_bots.value_network import (
+    DEFAULT_VALUE_NETWORK_PATH,
+    ValueNetwork,
+    action_policy_label,
+    extract_state_features,
+    load_value_network,
+)
 from catan_engine.actions import Action, ActionType, Phase
 from catan_engine.resources import Resource
 from catan_engine.rules import apply_action, can_place_settlement, get_legal_actions, maritime_trade_ratio
@@ -126,11 +132,11 @@ class MCTSBot(Bot):
         if state.phase in {Phase.ROLL, Phase.STEAL}:
             return legal_actions[0]
 
-        root_actions = _candidate_actions(state, player_id, legal_actions, self.branch_limit, self.weights, self.value_network, rng)
-        if len(root_actions) == 1:
-            return root_actions[0]
+        root_candidates = _candidates_with_priors(state, player_id, legal_actions, self.branch_limit, self.weights, self.value_network, rng)
+        if len(root_candidates) == 1:
+            return root_candidates[0][0]
 
-        root = _Node(state=state.clone(), player_id=player_id, untried_actions=list(root_actions))
+        root = _Node(state=state.clone(), player_id=player_id, untried_actions=list(root_candidates))
         for _ in range(self.iterations):
             node = root
             search_state = state.clone()
@@ -140,9 +146,10 @@ class MCTSBot(Bot):
                 search_state = node.state.clone()
 
             if node.untried_actions and search_state.phase != Phase.GAME_OVER:
-                action = node.untried_actions.pop(rng.randrange(len(node.untried_actions)))
+                index = max(range(len(node.untried_actions)), key=lambda i: node.untried_actions[i][1])
+                action, prior = node.untried_actions.pop(index)
                 search_state = apply_action(search_state, action, rng)
-                child_actions = _candidate_actions(
+                child_candidates = _candidates_with_priors(
                     search_state,
                     player_id,
                     get_legal_actions(search_state),
@@ -151,7 +158,7 @@ class MCTSBot(Bot):
                     self.value_network,
                     rng,
                 )
-                node = node.add_child(action, search_state, child_actions)
+                node = node.add_child(action, prior, search_state, child_candidates)
 
             reward = _rollout(search_state, player_id, self.rollout_depth, self.branch_limit, self.weights, self.value_network, rng)
             while node is not None:
@@ -178,40 +185,80 @@ class _Node:
     state: GameState
     player_id: int
     action: Action | None = None
+    prior: float = 1.0
     parent: _Node | None = None
-    untried_actions: list[Action] = field(default_factory=list)
+    untried_actions: list[tuple[Action, float]] = field(default_factory=list)
     children: list[_Node] = field(default_factory=list)
     visits: int = 0
     value: float = 0.0
 
-    def add_child(self, action: Action, state: GameState, actions: list[Action]) -> _Node:
+    def add_child(self, action: Action, prior: float, state: GameState, candidates: list[tuple[Action, float]]) -> _Node:
         child = _Node(
             state=state.clone(),
             player_id=self.player_id,
             action=action,
+            prior=prior,
             parent=self,
-            untried_actions=list(actions),
+            untried_actions=list(candidates),
         )
         self.children.append(child)
         return child
 
     def select_child(self, exploration: float, rng: random.Random) -> _Node:
-        log_parent = math.log(max(1, self.visits))
+        # PUCT-style selection: the policy prior steers exploration instead of
+        # only ordering candidate moves.
+        sqrt_parent = math.sqrt(max(1, self.visits))
         best_score = -float("inf")
         best_children: list[_Node] = []
         for child in self.children:
-            if child.visits == 0:
-                score = float("inf")
-            else:
-                exploit = child.value / child.visits
-                explore = exploration * math.sqrt(log_parent / child.visits)
-                score = exploit + explore
+            exploit = child.value / child.visits if child.visits else 0.5
+            explore = exploration * child.prior * sqrt_parent / (1 + child.visits)
+            score = exploit + explore
             if score > best_score:
                 best_score = score
                 best_children = [child]
             elif score == best_score:
                 best_children.append(child)
         return rng.choice(best_children)
+
+
+def _policy_probs(state: GameState, value_network: ValueNetwork | None) -> dict[str, float] | None:
+    """Run the NN policy head once for a state; callers reuse it for every action."""
+    if value_network is None:
+        return None
+    features = extract_state_features(state, state.current_player)
+    return value_network.predict_policy(features)
+
+
+def _action_prior(action: Action, policy_probs: dict[str, float] | None) -> float:
+    if policy_probs is None:
+        return 0.0
+    exact = policy_probs.get(action_policy_label(action))
+    if exact is not None:
+        return exact
+    return policy_probs.get(action.action_type.name, 0.0)
+
+
+def _candidates_with_priors(
+    state: GameState,
+    player_id: int,
+    legal_actions: list[Action],
+    branch_limit: int,
+    weights: EvaluationWeights,
+    value_network: ValueNetwork | None,
+    rng: random.Random,
+) -> list[tuple[Action, float]]:
+    policy_probs = _policy_probs(state, value_network) if len(legal_actions) > 1 else None
+    actions = _candidate_actions(state, player_id, legal_actions, branch_limit, weights, value_network, rng, policy_probs)
+    if policy_probs is None:
+        uniform = 1.0 / max(1, len(actions))
+        return [(action, uniform) for action in actions]
+    raw = [_action_prior(action, policy_probs) for action in actions]
+    total = sum(raw)
+    if total <= 0.0:
+        uniform = 1.0 / max(1, len(actions))
+        return [(action, uniform) for action in actions]
+    return [(action, prior / total) for action, prior in zip(actions, raw, strict=True)]
 
 
 def _rollout(
@@ -234,9 +281,13 @@ def _rollout(
             action = _least_valuable_discard(legal_actions)
         elif current.phase in {Phase.ROLL, Phase.STEAL}:
             action = legal_actions[0]
+        elif len(legal_actions) == 1:
+            action = legal_actions[0]
         else:
-            candidates = _candidate_actions(current, current.current_player, legal_actions, branch_limit, weights, value_network, rng)
-            action = max(candidates, key=lambda item: _action_value(current, current.current_player, item, weights, value_network, rng))
+            mover = current.current_player
+            policy_probs = _policy_probs(current, value_network)
+            candidates = _candidate_actions(current, mover, legal_actions, branch_limit, weights, value_network, rng, policy_probs)
+            action = max(candidates, key=lambda item: _action_value(current, mover, item, weights, value_network, rng, policy_probs))
         current = apply_action(current, action, rng)
     return _reward(current, player_id, weights, value_network)
 
@@ -267,6 +318,7 @@ def _candidate_actions(
     weights: EvaluationWeights,
     value_network: ValueNetwork | None,
     rng: random.Random,
+    policy_probs: dict[str, float] | None = None,
 ) -> list[Action]:
     if len(legal_actions) <= branch_limit:
         return legal_actions
@@ -293,7 +345,7 @@ def _candidate_actions(
         typed = [action for action in legal_actions if action.action_type == action_type]
         if not typed:
             continue
-        typed.sort(key=lambda action: _action_value(state, player_id, action, weights, value_network, rng), reverse=True)
+        typed.sort(key=lambda action: _action_value(state, player_id, action, weights, value_network, rng, policy_probs), reverse=True)
         ordered.extend(typed)
         if len(ordered) >= branch_limit:
             return ordered[:branch_limit]
@@ -307,6 +359,7 @@ def _action_value(
     weights: EvaluationWeights,
     value_network: ValueNetwork | None,
     rng: random.Random,
+    policy_probs: dict[str, float] | None = None,
 ) -> float:
     rng_state = rng.getstate()
     try:
@@ -319,8 +372,9 @@ def _action_value(
     if value_network is not None:
         # The NN value head scores the resulting state, while the policy head
         # gives a small prior to exact actions self-play has favored before.
+        # policy_probs is computed once per state by the caller.
         score += 8.0 * (value_network.predict_state(next_state, player_id) - 0.5)
-        score += 3.0 * value_network.action_prior(extract_state_features(state, player_id), action)
+        score += 3.0 * _action_prior(action, policy_probs)
     return score
 
 

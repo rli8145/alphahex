@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from catan_engine.actions import Action, ActionType, Phase
 from catan_engine.resources import ALL_RESOURCES, HEX_TO_RESOURCE, Resource, parse_resource
 from catan_engine.rules import CITY_COST, SETTLEMENT_COST, can_build_road, can_place_settlement, maritime_trade_ratio
@@ -186,6 +188,14 @@ FEATURE_NAMES.extend(
         "opp_port_fit",
         "own_can_win_now",
         "opp_can_win_now",
+        "own_best_settlement_spot",
+        "opp_best_settlement_spot",
+        "own_best_city_spot",
+        "opp_best_city_spot",
+        "own_best_road_target",
+        "opp_best_road_target",
+        "own_best_robber_gain",
+        "opp_best_robber_gain",
     ]
 )
 FEATURE_NAMES.extend(f"phase_{phase.name}" for phase in PHASES)
@@ -199,47 +209,44 @@ TrainingExample = tuple[list[float], float] | tuple[list[float], float, str | No
 class ValueNetwork:
     input_size: int
     hidden_size: int
-    hidden_weights: list[list[float]]
-    hidden_bias: list[float]
-    output_weights: list[float]
+    hidden_weights: np.ndarray  # (hidden, input)
+    hidden_bias: np.ndarray  # (hidden,)
+    output_weights: np.ndarray  # (hidden,)
     output_bias: float
-    policy_weights: list[list[float]]
-    policy_bias: list[float]
+    policy_weights: np.ndarray  # (policy, hidden)
+    policy_bias: np.ndarray  # (policy,)
 
     @classmethod
     def create(cls, input_size: int, hidden_size: int, rng: random.Random) -> "ValueNetwork":
+        # Weights are drawn from random.Random so seeded runs stay reproducible.
         scale = 1.0 / math.sqrt(max(1, input_size))
         return cls(
             input_size=input_size,
             hidden_size=hidden_size,
-            hidden_weights=[
-                [rng.uniform(-scale, scale) for _ in range(input_size)]
-                for _ in range(hidden_size)
-            ],
-            hidden_bias=[0.0 for _ in range(hidden_size)],
-            output_weights=[rng.uniform(-scale, scale) for _ in range(hidden_size)],
+            hidden_weights=np.array(
+                [[rng.uniform(-scale, scale) for _ in range(input_size)] for _ in range(hidden_size)]
+            ),
+            hidden_bias=np.zeros(hidden_size),
+            output_weights=np.array([rng.uniform(-scale, scale) for _ in range(hidden_size)]),
             output_bias=0.0,
-            policy_weights=[
-                [rng.uniform(-scale, scale) for _ in range(hidden_size)]
-                for _ in POLICY_NAMES
-            ],
-            policy_bias=[0.0 for _ in POLICY_NAMES],
+            policy_weights=np.array(
+                [[rng.uniform(-scale, scale) for _ in range(hidden_size)] for _ in POLICY_NAMES]
+            ),
+            policy_bias=np.zeros(len(POLICY_NAMES)),
         )
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ValueNetwork":
         hidden_size = int(data["hidden_size"])
-        policy_weights = data.get("policy_weights")
-        policy_bias = data.get("policy_bias")
         return cls(
             input_size=int(data["input_size"]),
             hidden_size=hidden_size,
-            hidden_weights=[[float(value) for value in row] for row in data["hidden_weights"]],
-            hidden_bias=[float(value) for value in data["hidden_bias"]],
-            output_weights=[float(value) for value in data["output_weights"]],
+            hidden_weights=np.asarray(data["hidden_weights"], dtype=float),
+            hidden_bias=np.asarray(data["hidden_bias"], dtype=float),
+            output_weights=np.asarray(data["output_weights"], dtype=float),
             output_bias=float(data["output_bias"]),
-            policy_weights=_normalize_policy_weights(policy_weights, hidden_size),
-            policy_bias=_normalize_policy_bias(policy_bias),
+            policy_weights=_normalize_policy_weights(data.get("policy_weights"), hidden_size),
+            policy_bias=_normalize_policy_bias(data.get("policy_bias")),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -247,18 +254,18 @@ class ValueNetwork:
             "input_size": self.input_size,
             "hidden_size": self.hidden_size,
             "feature_names": FEATURE_NAMES,
-            "hidden_weights": self.hidden_weights,
-            "hidden_bias": self.hidden_bias,
-            "output_weights": self.output_weights,
+            "hidden_weights": self.hidden_weights.tolist(),
+            "hidden_bias": self.hidden_bias.tolist(),
+            "output_weights": self.output_weights.tolist(),
             "output_bias": self.output_bias,
             "policy_names": POLICY_NAMES,
-            "policy_weights": self.policy_weights,
-            "policy_bias": self.policy_bias,
+            "policy_weights": self.policy_weights.tolist(),
+            "policy_bias": self.policy_bias.tolist(),
         }
 
     def predict(self, features: list[float]) -> float:
         hidden = self._hidden(features)
-        logit = self.output_bias + sum(weight * value for weight, value in zip(self.output_weights, hidden, strict=True))
+        logit = float(self.output_weights @ hidden) + self.output_bias
         return _sigmoid(logit)
 
     def predict_state(self, state: GameState, player_id: int) -> float:
@@ -266,21 +273,9 @@ class ValueNetwork:
 
     def predict_policy(self, features: list[float]) -> dict[str, float]:
         hidden = self._hidden(features)
-        logits = [
-            bias + sum(weight * value for weight, value in zip(row, hidden, strict=True))
-            for row, bias in zip(self.policy_weights, self.policy_bias, strict=True)
-        ]
+        logits = self.policy_weights @ hidden + self.policy_bias
         probabilities = _softmax(logits)
-        return {name: probabilities[index] for index, name in enumerate(POLICY_NAMES)}
-
-    def action_prior(self, features: list[float], action: Action | ActionType) -> float:
-        probabilities = self.predict_policy(features)
-        if isinstance(action, Action):
-            exact_label = action_policy_label(action)
-            if exact_label in probabilities:
-                return probabilities[exact_label]
-            return probabilities.get(action.action_type.name, 0.0)
-        return probabilities.get(action.name, 0.0)
+        return dict(zip(POLICY_NAMES, probabilities.tolist(), strict=True))
 
     def train(
         self,
@@ -333,20 +328,19 @@ class ValueNetwork:
         policy_count = 0
         for example in examples:
             features, target, policy_target = _unpack_example(example)
-            value_total += (self.predict(features) - target) ** 2
+            hidden = self._hidden(features)
+            output = _sigmoid(float(self.output_weights @ hidden) + self.output_bias)
+            value_total += (output - target) ** 2
             if policy_target in POLICY_INDEX:
                 policy_count += 1
-                probability = max(1e-9, self.predict_policy(features)[policy_target])
-                policy_total += -math.log(probability)
+                probabilities = _softmax(self.policy_weights @ hidden + self.policy_bias)
+                policy_total += -math.log(max(1e-9, float(probabilities[POLICY_INDEX[policy_target]])))
         return value_total / len(examples), policy_total / policy_count if policy_count else 0.0
 
-    def _hidden(self, features: list[float]) -> list[float]:
+    def _hidden(self, features: list[float]) -> np.ndarray:
         if len(features) != self.input_size:
             raise ValueError(f"expected {self.input_size} features, got {len(features)}")
-        return [
-            math.tanh(bias + sum(weight * value for weight, value in zip(row, features, strict=True)))
-            for row, bias in zip(self.hidden_weights, self.hidden_bias, strict=True)
-        ]
+        return np.tanh(self.hidden_weights @ np.asarray(features, dtype=float) + self.hidden_bias)
 
     def _train_one(
         self,
@@ -358,51 +352,33 @@ class ValueNetwork:
         l2: float,
         policy_loss_weight: float,
     ) -> None:
-        hidden = self._hidden(features)
-        logit = self.output_bias + sum(weight * value for weight, value in zip(self.output_weights, hidden, strict=True))
-        output = _sigmoid(logit)
+        inputs = np.asarray(features, dtype=float)
+        hidden = np.tanh(self.hidden_weights @ inputs + self.hidden_bias)
+        output = _sigmoid(float(self.output_weights @ hidden) + self.output_bias)
 
         # Backprop derivative for MSE(sigmoid(logit), target) with respect to
         # the value logit. This is the line where the value-head derivative is
         # computed before SGD applies it to the weights below.
         d_logit = (output - target) * output * (1.0 - output)
-        d_hidden_total = [
-            d_logit * weight * (1.0 - hidden_value * hidden_value)
-            for weight, hidden_value in zip(self.output_weights, hidden, strict=True)
-        ]
+        one_minus_h2 = 1.0 - hidden * hidden
+        d_hidden = d_logit * self.output_weights * one_minus_h2
 
-        old_policy_weights = [list(row) for row in self.policy_weights]
-        for hidden_index, hidden_value in enumerate(hidden):
-            self.output_weights[hidden_index] -= learning_rate * (d_logit * hidden_value + l2 * self.output_weights[hidden_index])
-        self.output_bias -= learning_rate * d_logit
+        new_output_weights = self.output_weights - learning_rate * (d_logit * hidden + l2 * self.output_weights)
 
         if policy_target in POLICY_INDEX:
-            label_index = POLICY_INDEX[policy_target]
-            logits = [
-                bias + sum(weight * value for weight, value in zip(row, hidden, strict=True))
-                for row, bias in zip(old_policy_weights, self.policy_bias, strict=True)
-            ]
-            probabilities = _softmax(logits)
-            for action_index, probability in enumerate(probabilities):
-                d_policy_logit = policy_loss_weight * (probability - (1.0 if action_index == label_index else 0.0))
-                for hidden_index, hidden_value in enumerate(hidden):
-                    d_hidden_total[hidden_index] += (
-                        d_policy_logit
-                        * old_policy_weights[action_index][hidden_index]
-                        * (1.0 - hidden_value * hidden_value)
-                    )
-                    self.policy_weights[action_index][hidden_index] -= learning_rate * (
-                        d_policy_logit * hidden_value + l2 * self.policy_weights[action_index][hidden_index]
-                    )
-                self.policy_bias[action_index] -= learning_rate * d_policy_logit
+            # Policy-head gradient is probability - one_hot(label), scaled by
+            # policy_loss_weight, applied to the shared hidden layer as well.
+            probabilities = _softmax(self.policy_weights @ hidden + self.policy_bias)
+            d_policy_logits = policy_loss_weight * probabilities
+            d_policy_logits[POLICY_INDEX[policy_target]] -= policy_loss_weight
+            d_hidden += (self.policy_weights.T @ d_policy_logits) * one_minus_h2
+            self.policy_weights -= learning_rate * (np.outer(d_policy_logits, hidden) + l2 * self.policy_weights)
+            self.policy_bias -= learning_rate * d_policy_logits
 
-        for hidden_index, hidden_value in enumerate(hidden):
-            d_hidden = d_hidden_total[hidden_index]
-            for feature_index, feature_value in enumerate(features):
-                self.hidden_weights[hidden_index][feature_index] -= learning_rate * (
-                    d_hidden * feature_value + l2 * self.hidden_weights[hidden_index][feature_index]
-                )
-            self.hidden_bias[hidden_index] -= learning_rate * d_hidden
+        self.output_weights = new_output_weights
+        self.output_bias -= learning_rate * d_logit
+        self.hidden_weights -= learning_rate * (np.outer(d_hidden, inputs) + l2 * self.hidden_weights)
+        self.hidden_bias -= learning_rate * d_hidden
 
 
 def load_value_network(path: str | Path | None = None) -> ValueNetwork | None:
@@ -445,6 +421,17 @@ def extract_state_features(state: GameState, player_id: int) -> list[float]:
     opponent = state.players[opponent_id]
     target_vp = max(1, state.config.target_vp)
 
+    # Expensive board sweeps are computed once here and reused by every
+    # feature that needs them (potential counts, threat features, port fit).
+    own_spots = _settlement_spots(state, player_id)
+    opp_spots = _settlement_spots(state, opponent_id)
+    own_edges = _buildable_edges(state, player_id)
+    opp_edges = _buildable_edges(state, opponent_id)
+    own_road_len = calculate_longest_road(state.board, state, player_id)
+    opp_road_len = calculate_longest_road(state.board, state, opponent_id)
+    own_prod = {resource: _production_by_resource(state, player_id, resource) for resource in Resource}
+    opp_prod = {resource: _production_by_resource(state, opponent_id, resource) for resource in Resource}
+
     features = [
         1.0 if state.current_player == player_id else 0.0,
         _scale(state.turn_number, 300.0),
@@ -466,8 +453,8 @@ def extract_state_features(state: GameState, player_id: int) -> list[float]:
         _scale(player.roads_remaining, 15.0),
         _scale(player.settlements_remaining, 5.0),
         _scale(player.cities_remaining, 4.0),
-        _scale(calculate_longest_road(state.board, state, player_id), 15.0),
-        _scale(calculate_longest_road(state.board, state, opponent_id), 15.0),
+        _scale(own_road_len, 15.0),
+        _scale(opp_road_len, 15.0),
         _scale(player.played_knights, 10.0),
         _scale(opponent.played_knights, 10.0),
         _scale(sum(player.dev_cards.values()), 8.0),
@@ -482,23 +469,23 @@ def extract_state_features(state: GameState, player_id: int) -> list[float]:
         _scale(_production_score(state, opponent_id), 50.0),
         _scale(_port_score(state, player_id), 10.0),
         _scale(_port_score(state, opponent_id), 10.0),
-        _scale(_expansion_count(state, player_id), 30.0),
-        _scale(_expansion_count(state, opponent_id), 30.0),
+        _scale(len(own_spots), 30.0),
+        _scale(len(opp_spots), 30.0),
         _scale(_robber_exposure(state, player_id), 4.0),
         _scale(_robber_exposure(state, opponent_id), 4.0),
     ]
-    features.extend(_scale(_production_by_resource(state, player_id, resource), 18.0) for resource in Resource)
-    features.extend(_scale(_production_by_resource(state, opponent_id, resource), 18.0) for resource in Resource)
+    features.extend(_scale(own_prod[resource], 18.0) for resource in Resource)
+    features.extend(_scale(opp_prod[resource], 18.0) for resource in Resource)
     features.extend(
         [
-            _scale(_settlement_potential(state, player_id), 12.0),
-            _scale(_settlement_potential(state, opponent_id), 12.0),
+            _scale(len(own_spots), 12.0),
+            _scale(len(opp_spots), 12.0),
             _scale(_city_potential(state, player_id), 5.0),
             _scale(_city_potential(state, opponent_id), 5.0),
-            _scale(_road_frontier_count(state, player_id), 15.0),
-            _scale(_road_frontier_count(state, opponent_id), 15.0),
-            _scale(max(0, calculate_longest_road(state.board, state, player_id) - 3), 12.0),
-            _scale(max(0, calculate_longest_road(state.board, state, opponent_id) - 3), 12.0),
+            _scale(len(own_edges) if player.roads_remaining > 0 else 0, 15.0),
+            _scale(len(opp_edges) if opponent.roads_remaining > 0 else 0, 15.0),
+            _scale(max(0, own_road_len - 3), 12.0),
+            _scale(max(0, opp_road_len - 3), 12.0),
             _scale(_blocking_pressure(state, player_id, opponent_id), 12.0),
             _scale(_blocking_pressure(state, opponent_id, player_id), 12.0),
             1.0 if player.played_dev_card_this_turn else 0.0,
@@ -506,10 +493,18 @@ def extract_state_features(state: GameState, player_id: int) -> list[float]:
             _scale(len(state.dev_card_deck), 25.0),
             _scale(max(0, player.total_resources() - state.config.discard_limit), 15.0),
             _scale(max(0, opponent.total_resources() - state.config.discard_limit), 15.0),
-            _scale(_port_fit(state, player_id), 10.0),
-            _scale(_port_fit(state, opponent_id), 10.0),
-            1.0 if _can_gain_vp_now(state, player_id) else 0.0,
-            1.0 if _can_gain_vp_now(state, opponent_id) else 0.0,
+            _scale(_port_fit(state, player_id, own_prod), 10.0),
+            _scale(_port_fit(state, opponent_id, opp_prod), 10.0),
+            1.0 if _can_gain_vp_now(state, player_id, len(own_spots)) else 0.0,
+            1.0 if _can_gain_vp_now(state, opponent_id, len(opp_spots)) else 0.0,
+            _scale(_best_node_score(state, own_spots), 12.0),
+            _scale(_best_node_score(state, opp_spots), 12.0),
+            _scale(_best_node_score(state, player.settlements), 12.0),
+            _scale(_best_node_score(state, opponent.settlements), 12.0),
+            _scale(_best_road_target(state, own_edges), 12.0),
+            _scale(_best_road_target(state, opp_edges), 12.0),
+            _scale(_best_robber_gain(state, player_id), 15.0),
+            _scale(_best_robber_gain(state, opponent_id), 15.0),
         ]
     )
     features.extend(1.0 if state.phase == phase else 0.0 for phase in PHASES)
@@ -557,12 +552,12 @@ def _production_by_resource(state: GameState, player_id: int, resource: Resource
     return score
 
 
-def _settlement_potential(state: GameState, player_id: int) -> int:
-    return sum(
-        1
+def _settlement_spots(state: GameState, player_id: int) -> list[int]:
+    return [
+        node_id
         for node_id in state.board.nodes
         if can_place_settlement(state, node_id, setup=False, player_id=player_id)
-    )
+    ]
 
 
 def _city_potential(state: GameState, player_id: int) -> float:
@@ -571,15 +566,52 @@ def _city_potential(state: GameState, player_id: int) -> float:
     return readiness * min(player.cities_remaining, len(player.settlements))
 
 
-def _road_frontier_count(state: GameState, player_id: int) -> int:
-    player = state.players[player_id]
-    if player.roads_remaining <= 0:
-        return 0
-    return sum(
-        1
+def _buildable_edges(state: GameState, player_id: int) -> list[int]:
+    return [
+        edge_id
         for edge_id in state.board.edges
         if can_build_road(state, player_id, edge_id)
-    )
+    ]
+
+
+def _best_node_score(state: GameState, node_ids) -> float:
+    return max((_node_score(state, node_id) for node_id in node_ids), default=0.0)
+
+
+def _best_road_target(state: GameState, edge_ids: list[int]) -> float:
+    occupied = state.occupied_nodes()
+    best = 0.0
+    for edge_id in edge_ids:
+        edge = state.board.edges[edge_id]
+        for node_id in (edge.node_a, edge.node_b):
+            if node_id in occupied:
+                continue
+            if any(adjacent in occupied for adjacent in state.board.get_adjacent_nodes(node_id)):
+                continue
+            best = max(best, _node_score(state, node_id))
+    return best
+
+
+def _best_robber_gain(state: GameState, player_id: int) -> float:
+    token_weights = {2: 1, 3: 2, 4: 3, 5: 4, 6: 5, 8: 5, 9: 4, 10: 3, 11: 2, 12: 1}
+    opponent = state.players[state.opponent_id(player_id)]
+    player = state.players[player_id]
+    best = 0.0
+    for hex_id, hex_tile in state.board.hexes.items():
+        if hex_id == state.board.robber_hex_id or hex_tile.number_token is None:
+            continue
+        buildings = 0
+        for node_id in state.board.get_nodes_for_hex(hex_id):
+            if node_id in opponent.cities:
+                buildings += 2
+            elif node_id in opponent.settlements:
+                buildings += 1
+            if node_id in player.cities:
+                buildings -= 2
+            elif node_id in player.settlements:
+                buildings -= 1
+        best = max(best, token_weights.get(hex_tile.number_token, 0) * buildings)
+    return best
 
 
 def _blocking_pressure(state: GameState, blocker_id: int, seeker_id: int) -> int:
@@ -596,17 +628,17 @@ def _blocking_pressure(state: GameState, blocker_id: int, seeker_id: int) -> int
     return blocked
 
 
-def _port_fit(state: GameState, player_id: int) -> float:
+def _port_fit(state: GameState, player_id: int, production: dict[Resource, float]) -> float:
     score = 0.0
     for resource in Resource:
         ratio = maritime_trade_ratio(state, player_id, resource)
         if ratio >= 4:
             continue
-        score += (4 - ratio) * (0.6 + _production_by_resource(state, player_id, resource) / 10.0)
+        score += (4 - ratio) * (0.6 + production[resource] / 10.0)
     return score
 
 
-def _can_gain_vp_now(state: GameState, player_id: int) -> bool:
+def _can_gain_vp_now(state: GameState, player_id: int, settlement_spot_count: int) -> bool:
     player = state.players[player_id]
     if total_vp(state, player_id) < state.config.target_vp - 1:
         return False
@@ -614,7 +646,7 @@ def _can_gain_vp_now(state: GameState, player_id: int) -> bool:
     can_settle = (
         player.settlements_remaining > 0
         and player.has_resources(SETTLEMENT_COST)
-        and _settlement_potential(state, player_id) > 0
+        and settlement_spot_count > 0
     )
     return can_city or can_settle
 
@@ -628,14 +660,6 @@ def _port_score(state: GameState, player_id: int) -> float:
         elif ratio == 3:
             score += 0.8
     return score
-
-
-def _expansion_count(state: GameState, player_id: int) -> int:
-    return sum(
-        1
-        for node_id in state.board.nodes
-        if can_place_settlement(state, node_id, setup=False, player_id=player_id)
-    )
 
 
 def _robber_exposure(state: GameState, player_id: int) -> int:
@@ -661,21 +685,24 @@ def _unpack_example(example: TrainingExample) -> tuple[list[float], float, str |
     return features, float(target), policy_target
 
 
-def _normalize_policy_weights(values: Any, hidden_size: int) -> list[list[float]]:
-    if not isinstance(values, list) or len(values) != len(POLICY_NAMES):
-        return [[0.0 for _ in range(hidden_size)] for _ in POLICY_NAMES]
-    normalized: list[list[float]] = []
-    for row in values:
-        if not isinstance(row, list) or len(row) != hidden_size:
-            return [[0.0 for _ in range(hidden_size)] for _ in POLICY_NAMES]
-        normalized.append([float(value) for value in row])
-    return normalized
+def _normalize_policy_weights(values: Any, hidden_size: int) -> np.ndarray:
+    try:
+        weights = np.asarray(values, dtype=float)
+    except (TypeError, ValueError):
+        weights = None
+    if weights is None or weights.shape != (len(POLICY_NAMES), hidden_size):
+        return np.zeros((len(POLICY_NAMES), hidden_size))
+    return weights
 
 
-def _normalize_policy_bias(values: Any) -> list[float]:
-    if not isinstance(values, list) or len(values) != len(POLICY_NAMES):
-        return [0.0 for _ in POLICY_NAMES]
-    return [float(value) for value in values]
+def _normalize_policy_bias(values: Any) -> np.ndarray:
+    try:
+        bias = np.asarray(values, dtype=float)
+    except (TypeError, ValueError):
+        bias = None
+    if bias is None or bias.shape != (len(POLICY_NAMES),):
+        return np.zeros(len(POLICY_NAMES))
+    return bias
 
 
 def _sigmoid(value: float) -> float:
@@ -686,12 +713,11 @@ def _sigmoid(value: float) -> float:
     return z / (1.0 + z)
 
 
-def _softmax(values: list[float]) -> list[float]:
-    if not values:
-        return []
-    offset = max(values)
-    exps = [math.exp(value - offset) for value in values]
-    total = sum(exps)
+def _softmax(logits: np.ndarray) -> np.ndarray:
+    if logits.size == 0:
+        return logits
+    exps = np.exp(logits - np.max(logits))
+    total = exps.sum()
     if total <= 0:
-        return [1.0 / len(values) for _ in values]
-    return [value / total for value in exps]
+        return np.full(logits.shape, 1.0 / logits.size)
+    return exps / total
