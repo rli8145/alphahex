@@ -1,5 +1,7 @@
 .venv/
 .env
+.env*.local
+.DS_Store
 __pycache__/
 data/replays/
 data/training/*.jsonl
@@ -12,3 +14,4 @@ packages/bots/catan_bots/mcts_weights.json
 node_modules/
 *.egg-info/
 web/dist/
+.vercel

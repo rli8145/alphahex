@@ -1,0 +1,9 @@
+.venv
+node_modules
+web/node_modules
+web/dist
+data
+*.egg-info
+__pycache__
+packages/bots/catan_bots/mcts_value_network.json
+packages/bots/catan_bots/mcts_weights.json
