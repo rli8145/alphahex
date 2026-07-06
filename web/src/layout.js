@@ -32,7 +32,10 @@ function corner(center, k) {
   return { x: center.x + Math.cos(angle), y: center.y + Math.sin(angle) };
 }
 
-export function computeLayout(board, scale = 56, padding = 44) {
+// `padding` must leave room for the port badges, which are pushed ~40 units
+// past the outer coastal nodes plus a ~19-unit-wide badge (see buildPorts in
+// Board.jsx). 64 keeps the outermost ports inside the viewBox.
+export function computeLayout(board, scale = 56, padding = 64) {
   const coords = axialCoords();
   const nodePos = {}; // node_id -> {x, y}
 

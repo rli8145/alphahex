@@ -348,7 +348,7 @@ h3 {
   font-size: 8px;
   font-weight: 700;
   fill: #6a5f48;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.3px;
 }
 .token-dots.hot {
   fill: #b32414;
@@ -375,6 +375,27 @@ h3 {
   font-size: 8.5px;
   font-weight: 800;
   text-transform: uppercase;
+}
+.robber-mover {
+  transition: transform 700ms cubic-bezier(0.35, 0.9, 0.4, 1);
+}
+
+/* Dice payout flash over hexes matching the last roll */
+.payout-flash {
+  fill: #fff7d9;
+  opacity: 0;
+  animation: payout-flash 1.6s ease-out forwards;
+}
+@keyframes payout-flash {
+  0% {
+    opacity: 0;
+  }
+  18% {
+    opacity: 0.6;
+  }
+  100% {
+    opacity: 0;
+  }
 }
 
 /* Ports */
@@ -1456,6 +1477,59 @@ button:disabled {
 .winner-banner.lose {
   background: var(--panel-2);
   border: 1px solid var(--rule);
+  color: var(--ink-soft);
+}
+
+/* Game summary panel */
+.summary-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.summary-table th {
+  text-align: right;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--ink-soft);
+  padding: 2px 4px;
+  font-weight: 700;
+}
+.summary-table th:first-child,
+.summary-table td.summary-name {
+  text-align: left;
+}
+.summary-table td {
+  text-align: right;
+  padding: 3px 4px;
+  font-weight: 600;
+}
+.summary-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: -1px;
+}
+.summary-badge {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--brass);
+  color: #fff;
+  font-size: 9.5px;
+  font-weight: 800;
+  vertical-align: 1px;
+}
+.summary-hidden {
+  color: var(--ink-soft);
+  font-weight: 600;
+}
+.summary-road-note {
+  margin: 8px 0 0;
+  font-size: 12px;
   color: var(--ink-soft);
 }
 

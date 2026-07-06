@@ -5,6 +5,7 @@ import ActionsPanel from "./components/ActionsPanel.jsx";
 import ActionLog from "./components/ActionLog.jsx";
 import PlayerPanel from "./components/PlayerPanel.jsx";
 import BankPanel from "./components/BankPanel.jsx";
+import SummaryPanel from "./components/SummaryPanel.jsx";
 import LegendModal from "./components/LegendModal.jsx";
 import * as api from "./api.js";
 import { actionLabel, BOT_ID, HUMAN_ID, logLine, PLAYER_NAMES, resourceGainLines } from "./format.js";
@@ -35,12 +36,17 @@ export default function App() {
   const [actionMode, setActionMode] = useState(null); // armed board action (build/knight/road-building)
   const [roadFirst, setRoadFirst] = useState(null); // first edge picked for Road Building
   const [botStatus, setBotStatus] = useState(null);
+  const [payoutFx, setPayoutFx] = useState(null); // { number, fxId } — retriggers the dice payout flash
 
   const startedRef = useRef(false);
   const botRunningRef = useRef(false);
   const botRunIdRef = useRef(0);
 
   const appendLog = useCallback((action, beforeState = null, afterState = null) => {
+    if (action.action_type === "ROLL_DICE" && afterState?.dice_roll != null) {
+      const rolled = afterState.dice_roll;
+      setPayoutFx((prev) => ({ number: rolled, fxId: (prev?.fxId ?? 0) + 1 }));
+    }
     const text = logLine(action);
     const resourceLines = resourceGainLines(beforeState, afterState, action);
     const exactSteal = resourceLines.some((entry) => entry.kind === "steal");
@@ -108,6 +114,7 @@ export default function App() {
       const seed = Math.floor(Math.random() * 1_000_000);
       const resp = await api.newGame(seed);
       setLog([]);
+      setPayoutFx(null);
       setGame({ state: resp.state, legal_actions: resp.legal_actions, winner: resp.winner });
       if (resp.winner == null && resp.state.current_player !== HUMAN_ID) {
         await driveBot(resp.state, resp.winner);
@@ -317,6 +324,7 @@ export default function App() {
           highlight={highlight}
           pendingMark={pendingMark}
           selectedEdgeId={roadFirst}
+          payout={payoutFx}
           pendingPrompt={
             pending ? PLACEMENT_PROMPT[pending.action_type] ?? "Confirm this action?" : null
           }
@@ -370,6 +378,7 @@ export default function App() {
         </aside>
 
         <aside className="right-col">
+          <SummaryPanel state={state} />
           <BankPanel state={state} />
           <ActionLog entries={log} />
         </aside>

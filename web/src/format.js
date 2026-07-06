@@ -55,6 +55,63 @@ export const PHASE_LABEL = {
   GAME_OVER: "Game over",
 };
 
+export const TOKEN_DOTS = { 2: 1, 3: 2, 4: 3, 5: 4, 6: 5, 8: 5, 9: 4, 10: 3, 11: 2, 12: 1 };
+
+// Expected production in "pips" (dice-odds dots) per roll, robber included.
+export function productionPips(state, playerId) {
+  const player = state.players[playerId];
+  const board = state.board;
+  let pips = 0;
+  for (const hex of Object.values(board.hexes)) {
+    if (hex.number_token == null || hex.id === board.robber_hex_id) continue;
+    const dots = TOKEN_DOTS[hex.number_token] ?? 0;
+    for (const nodeId of hex.node_ids) {
+      if (player.settlements.includes(nodeId)) pips += dots;
+      else if (player.cities.includes(nodeId)) pips += 2 * dots;
+    }
+  }
+  return pips;
+}
+
+// Longest single road chain, mirroring the engine's calculate_longest_road
+// (paths break at nodes occupied by the opponent).
+export function longestRoadLength(state, playerId) {
+  const player = state.players[playerId];
+  const board = state.board;
+  if (!player.roads || player.roads.length === 0) return 0;
+  const graph = new Map();
+  for (const edgeId of player.roads) {
+    const edge = board.edges[edgeId];
+    if (!edge) continue;
+    if (!graph.has(edge.node_a)) graph.set(edge.node_a, []);
+    if (!graph.has(edge.node_b)) graph.set(edge.node_b, []);
+    graph.get(edge.node_a).push([edge.node_b, edge.id]);
+    graph.get(edge.node_b).push([edge.node_a, edge.id]);
+  }
+  const blocked = new Set();
+  state.players.forEach((opponent, opponentId) => {
+    if (opponentId === playerId) return;
+    opponent.settlements.forEach((n) => blocked.add(n));
+    opponent.cities.forEach((n) => blocked.add(n));
+  });
+  const dfs = (nodeId, used, startNode) => {
+    if (blocked.has(nodeId) && nodeId !== startNode) return 0;
+    let best = 0;
+    for (const [nextNode, edgeId] of graph.get(nodeId) ?? []) {
+      if (used.has(edgeId)) continue;
+      used.add(edgeId);
+      best = Math.max(best, 1 + dfs(nextNode, used, startNode));
+      used.delete(edgeId);
+    }
+    return best;
+  };
+  let best = 0;
+  for (const nodeId of graph.keys()) {
+    best = Math.max(best, dfs(nodeId, new Set(), nodeId));
+  }
+  return best;
+}
+
 export function visibleVp(state, playerId) {
   const p = state.players[playerId];
   let vp = p.settlements.length + 2 * p.cities.length;

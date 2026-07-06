@@ -63,6 +63,7 @@ export default function Board({
   pendingMark = null,
   selectedEdgeId = null,
   pendingPrompt = null,
+  payout = null, // { number, fxId } — pulses hexes that just paid out
   onConfirm,
   onCancel,
   confirmDisabled = false,
@@ -73,6 +74,7 @@ export default function Board({
   const board = state.board;
   const layout = useMemo(() => computeLayout(board), [board]);
   const ports = useMemo(() => buildPorts(board, layout.nodes), [board, layout]);
+  const robberHex = layout.hexes.find((hex) => hex.id === board.robber_hex_id) ?? null;
 
   // Screen anchor (in SVG user coords) for the placement confirmation popup.
   const anchor = useMemo(() => {
@@ -159,40 +161,58 @@ export default function Board({
         })}
       </g>
 
-      {/* Number tokens + robber (above tiles, no shadow group so text stays crisp) */}
+      {/* Dice payout pulse: flash every hex matching the last roll */}
+      {payout?.number != null &&
+        layout.hexes
+          .filter((hex) => hex.number === payout.number && hex.id !== board.robber_hex_id)
+          .map((hex) => (
+            <polygon
+              key={`payout-${payout.fxId}-${hex.id}`}
+              className="payout-flash"
+              points={hexPoints(hex.x, hex.y, SIZE * 0.985)}
+              pointerEvents="none"
+            />
+          ))}
+
+      {/* Number tokens (above tiles, no shadow group so text stays crisp) */}
       {layout.hexes.map((hex) => {
-        const isRobber = board.robber_hex_id === hex.id;
         const hot = hex.number === 6 || hex.number === 8;
         return (
           <g key={`tok-${hex.id}`} pointerEvents="none">
             {hex.number != null && (
               <g filter="url(#tokenShadow)">
-                <circle cx={hex.x} cy={hex.y} r={SIZE * 0.3} className="token-disc" />
-                <text x={hex.x} y={hex.y - 2.5} textAnchor="middle" dominantBaseline="middle" className={hot ? "token hot" : "token"}>
+                <circle cx={hex.x} cy={hex.y} r={SIZE * 0.33} className="token-disc" />
+                <text x={hex.x} y={hex.y - 3.5} textAnchor="middle" dominantBaseline="middle" className={hot ? "token hot" : "token"}>
                   {hex.number}
                 </text>
-                <text x={hex.x} y={hex.y + SIZE * 0.15} textAnchor="middle" dominantBaseline="middle" className={hot ? "token-dots hot" : "token-dots"}>
+                <text x={hex.x} y={hex.y + SIZE * 0.12} textAnchor="middle" dominantBaseline="middle" className={hot ? "token-dots hot" : "token-dots"}>
                   {"o".repeat(NUMBER_DOTS[hex.number] ?? 0)}
                 </text>
-              </g>
-            )}
-            {isRobber && (
-              <g>
-                <circle cx={hex.x} cy={hex.y} r={SIZE * 0.34} className="robber-ring" />
-                <Robber cx={hex.x} cy={hex.y} size={SIZE} />
-                {hex.number != null && (
-                  <g transform={`translate(${hex.x}, ${hex.y + SIZE * 0.44})`} className="blocked-token">
-                    <rect x="-24" y="-10" width="48" height="18" rx="5" />
-                    <text x="0" y="0" textAnchor="middle" dominantBaseline="middle">
-                      blocked {hex.number}
-                    </text>
-                  </g>
-                )}
               </g>
             )}
           </g>
         );
       })}
+
+      {/* Robber: a single persistent group so moves animate between hexes */}
+      {robberHex && (
+        <g
+          className="robber-mover"
+          style={{ transform: `translate(${robberHex.x}px, ${robberHex.y}px)` }}
+          pointerEvents="none"
+        >
+          <circle cx={0} cy={0} r={SIZE * 0.34} className="robber-ring" />
+          <Robber cx={0} cy={0} size={SIZE} />
+          {robberHex.number != null && (
+            <g transform={`translate(0, ${SIZE * 0.44})`} className="blocked-token">
+              <rect x="-24" y="-10" width="48" height="18" rx="5" />
+              <text x="0" y="0" textAnchor="middle" dominantBaseline="middle">
+                blocked {robberHex.number}
+              </text>
+            </g>
+          )}
+        </g>
+      )}
 
       {/* Roads */}
       {layout.edges.map((edge) => {
