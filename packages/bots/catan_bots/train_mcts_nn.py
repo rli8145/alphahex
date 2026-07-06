@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
+import os
 import random
 import time
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -30,7 +33,8 @@ DEFAULT_DATASET_PATH = TRAINING_DIR / "selfplay.jsonl"
 DEFAULT_LEADERBOARD_PATH = TRAINING_DIR / "leaderboard.json"
 DEFAULT_HISTORY_DIR = TRAINING_DIR / "checkpoints"
 DEFAULT_LOG_PATH = TRAINING_DIR / "logs" / "train.out.log"
-BOARD_RULE_VERSION = "random_start_balanced_board_random_ports_friendly_robber_exact_policy_v1"
+DEFAULT_METRICS_CSV_PATH = TRAINING_DIR / "logs" / "train_metrics.csv"
+BOARD_RULE_VERSION = "random_start_balanced_board_random_ports_friendly_robber_exact_policy_tactical_v2"
 _LOG_FILE_PATH: Path | None = None
 
 TRAINABLE_PHASES = {Phase.SETUP_SETTLEMENT, Phase.SETUP_ROAD, Phase.MOVE_ROBBER, Phase.MAIN}
@@ -51,17 +55,17 @@ PROFILE_DEFAULTS = {
         "history_opponents": 0,
     },
     "offline": {
-        "games": 6,
+        "games": 12,
         "hidden_size": 64,
         "epochs": 4,
         "learning_rate": 0.015,
         "l2": 0.0001,
-        "iterations": 6,
+        "iterations": 12,
         "rollout_depth": 5,
         "branch_limit": 8,
         "max_turns": 260,
-        "eval_games": 6,
-        "buffer_samples": 2000,
+        "eval_games": 20,
+        "buffer_samples": 3000,
         "history_opponent_rate": 0.25,
         "history_opponents": 6,
     },
@@ -130,6 +134,9 @@ def train(
     history_opponent_rate: float,
     history_opponents: int,
     accept_vp_margin: float,
+    workers: int = 1,
+    metrics_csv: Path | None = None,
+    dataset_max_games: int = 0,
     cycle: int | None = None,
     progress: bool = False,
 ) -> dict[str, Any]:
@@ -144,27 +151,36 @@ def train(
     total_turns = 0
     wins = {0: 0, 1: 0, "draw": 0}
 
-    for game_index in range(games):
-        game_seed = seed + game_index
-        _log_progress(
-            progress,
-            cycle=cycle,
-            stage="selfplay",
-            status="started",
-            game=game_index + 1,
-            games=games,
-            seed=game_seed,
+    _log_progress(progress, cycle=cycle, stage="selfplay", status="started", games=games, workers=workers)
+    jobs = [
+        (
+            game_index,
+            seed + game_index,
+            base_network,
+            iterations,
+            rollout_depth,
+            branch_limit,
+            max_turns,
+            history_networks,
+            history_opponent_rate,
         )
-        result = collect_game_examples(
-            seed=game_seed,
-            network=base_network,
-            iterations=iterations,
-            rollout_depth=rollout_depth,
-            branch_limit=branch_limit,
-            max_turns=max_turns,
-            opponent_pool=history_networks,
-            history_opponent_rate=history_opponent_rate,
-        )
+        for game_index in range(games)
+    ]
+    game_results: list[tuple[int, GameExamples]] = []
+    if workers > 1 and games > 1:
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            job_outputs = executor.map(_selfplay_job, jobs)
+            for game_index, result in job_outputs:
+                game_results.append((game_index, result))
+                _log_selfplay_game(progress, cycle, game_index, games, result)
+    else:
+        for job in jobs:
+            game_index, result = _selfplay_job(job)
+            game_results.append((game_index, result))
+            _log_selfplay_game(progress, cycle, game_index, games, result)
+
+    game_results.sort(key=lambda item: item[0])
+    for game_index, result in game_results:
         latest_examples.extend(result.examples)
         illegal_actions += result.illegal_actions
         crashes += result.crashes
@@ -174,21 +190,9 @@ def train(
         else:
             wins["draw"] += 1
         if dataset_path is not None:
-            _append_game_dataset(dataset_path, game_seed, result)
-        _log_progress(
-            progress,
-            cycle=cycle,
-            stage="selfplay",
-            status="finished",
-            game=game_index + 1,
-            games=games,
-            examples=len(result.examples),
-            winner=result.winner,
-            final_score=result.final_score,
-            turn_count=result.turn_count,
-            illegal_actions=result.illegal_actions,
-            crashes=result.crashes,
-        )
+            _append_game_dataset(dataset_path, seed + game_index, result)
+    if dataset_path is not None:
+        _compact_dataset(dataset_path, dataset_max_games)
 
     buffer_examples = _load_replay_examples(dataset_path, rng, buffer_samples) if dataset_path is not None else []
     training_examples = latest_examples + buffer_examples
@@ -214,7 +218,7 @@ def train(
     )
     _log_progress(progress, cycle=cycle, stage="sgd", status="finished", **training_stats)
 
-    _log_progress(progress, cycle=cycle, stage="evaluation", status="started", games=eval_games)
+    _log_progress(progress, cycle=cycle, stage="evaluation", status="started", games=eval_games, workers=workers)
     evaluation = evaluate_candidate(
         candidate=candidate,
         current=incumbent,
@@ -224,6 +228,7 @@ def train(
         rollout_depth=rollout_depth,
         branch_limit=branch_limit,
         max_turns=max_turns,
+        workers=workers,
     )
     _log_progress(progress, cycle=cycle, stage="evaluation", status="finished", evaluation=evaluation)
     _log_progress(
@@ -241,6 +246,7 @@ def train(
         rollout_depth=rollout_depth,
         branch_limit=branch_limit,
         max_turns=max_turns,
+        workers=workers,
     )
     _log_progress(
         progress,
@@ -266,6 +272,7 @@ def train(
         "rollout_depth": rollout_depth,
         "branch_limit": branch_limit,
         "max_turns": max_turns,
+        "workers": workers,
         "randomized_boards": True,
         "board_rule_version": BOARD_RULE_VERSION,
         "policy_head": True,
@@ -295,6 +302,33 @@ def train(
             "policy_loss_after": metadata.get("policy_loss_after", 0.0),
         },
     )
+    if metrics_csv is not None:
+        _append_metrics_csv(
+            metrics_csv,
+            {
+                "time": int(time.time()),
+                "cycle": cycle if cycle is not None else 0,
+                "seed": seed,
+                "games": games,
+                "latest_examples": len(latest_examples),
+                "buffer_examples": len(buffer_examples),
+                "learning_rate": learning_rate,
+                "loss_before": metadata["loss_before"],
+                "loss_after": metadata["loss_after"],
+                "value_loss_after": metadata.get("value_loss_after", 0.0),
+                "policy_loss_after": metadata.get("policy_loss_after", 0.0),
+                "eval_games": evaluation["games"],
+                "candidate_wins": evaluation["candidate_wins"],
+                "current_wins": evaluation["current_wins"],
+                "draws": evaluation["draws"],
+                "average_vp_margin": evaluation["average_vp_margin"],
+                "eval_early_stopped": evaluation.get("early_stopped", False),
+                "accepted": accepted,
+                "average_turns": metadata["average_turns"],
+                "illegal_actions": illegal_actions,
+                "crashes": crashes,
+            },
+        )
     _log_progress(
         progress,
         cycle=cycle,
@@ -331,12 +365,19 @@ def train_continuously(
     history_opponent_rate: float,
     history_opponents: int,
     accept_vp_margin: float,
+    workers: int = 1,
+    lr_decay: float = 1.0,
+    metrics_csv: Path | None = None,
+    dataset_max_games: int = 0,
 ) -> None:
     cycle = 0
     examples_total = 0
     try:
         while True:
             cycle += 1
+            # Decay the learning rate across cycles so late training makes
+            # smaller, more stable updates.
+            cycle_learning_rate = learning_rate * (lr_decay ** (cycle - 1))
             _emit_json(
                 {
                     "cycle": cycle,
@@ -346,6 +387,8 @@ def train_continuously(
                     "rollout_depth": rollout_depth,
                     "branch_limit": branch_limit,
                     "eval_games": eval_games,
+                    "workers": workers,
+                    "learning_rate": round(cycle_learning_rate, 6),
                 }
             )
             summary = train(
@@ -354,7 +397,7 @@ def train_continuously(
                 output=output,
                 hidden_size=hidden_size,
                 epochs=epochs,
-                learning_rate=learning_rate,
+                learning_rate=cycle_learning_rate,
                 l2=l2,
                 iterations=iterations,
                 rollout_depth=rollout_depth,
@@ -369,6 +412,9 @@ def train_continuously(
                 history_opponent_rate=history_opponent_rate,
                 history_opponents=history_opponents,
                 accept_vp_margin=accept_vp_margin,
+                workers=workers,
+                metrics_csv=metrics_csv,
+                dataset_max_games=dataset_max_games,
                 cycle=cycle,
                 progress=True,
             )
@@ -478,6 +524,63 @@ def collect_game_examples(
     )
 
 
+def _selfplay_job(args: tuple) -> tuple[int, GameExamples]:
+    (
+        game_index,
+        game_seed,
+        network,
+        iterations,
+        rollout_depth,
+        branch_limit,
+        max_turns,
+        opponent_pool,
+        history_opponent_rate,
+    ) = args
+    result = collect_game_examples(
+        seed=game_seed,
+        network=network,
+        iterations=iterations,
+        rollout_depth=rollout_depth,
+        branch_limit=branch_limit,
+        max_turns=max_turns,
+        opponent_pool=opponent_pool,
+        history_opponent_rate=history_opponent_rate,
+    )
+    return game_index, result
+
+
+def _log_selfplay_game(progress: bool, cycle: int | None, game_index: int, games: int, result: GameExamples) -> None:
+    _log_progress(
+        progress,
+        cycle=cycle,
+        stage="selfplay",
+        status="finished",
+        game=game_index + 1,
+        games=games,
+        examples=len(result.examples),
+        winner=result.winner,
+        final_score=result.final_score,
+        turn_count=result.turn_count,
+        illegal_actions=result.illegal_actions,
+        crashes=result.crashes,
+    )
+
+
+def _evaluation_job(args: tuple) -> tuple[int, dict[str, Any]]:
+    (game_index, game_seed, candidate, current, candidate_player, iterations, rollout_depth, branch_limit, max_turns) = args
+    result = _play_evaluation_game(
+        seed=game_seed,
+        candidate=candidate,
+        current=current,
+        candidate_player=candidate_player,
+        iterations=iterations,
+        rollout_depth=rollout_depth,
+        branch_limit=branch_limit,
+        max_turns=max_turns,
+    )
+    return game_index, result
+
+
 def evaluate_candidate(
     *,
     candidate: ValueNetwork,
@@ -488,6 +591,7 @@ def evaluate_candidate(
     rollout_depth: int,
     branch_limit: int,
     max_turns: int,
+    workers: int = 1,
 ) -> dict[str, Any]:
     if games <= 0:
         return {
@@ -499,6 +603,7 @@ def evaluate_candidate(
             "illegal_actions": 0,
             "crashes": 0,
             "average_turns": 0.0,
+            "early_stopped": False,
         }
     candidate_wins = 0
     current_wins = 0
@@ -507,39 +612,51 @@ def evaluate_candidate(
     crashes = 0
     total_turns = 0
     total_margin = 0
-    for game_index in range(games):
-        candidate_player = game_index % 2
-        result = _play_evaluation_game(
-            seed=seed + game_index,
-            candidate=candidate,
-            current=current,
-            candidate_player=candidate_player,
-            iterations=iterations,
-            rollout_depth=rollout_depth,
-            branch_limit=branch_limit,
-            max_turns=max_turns,
-        )
-        winner = result["winner"]
-        if winner == candidate_player:
-            candidate_wins += 1
-        elif winner is None:
-            draws += 1
-        else:
-            current_wins += 1
-        score = result["final_score"]
-        total_margin += score[candidate_player] - score[1 - candidate_player]
-        illegal_actions += result["illegal_actions"]
-        crashes += result["crashes"]
-        total_turns += result["turn_count"]
+    played = 0
+    early_stopped = False
+    chunk_size = max(1, workers)
+    executor = ProcessPoolExecutor(max_workers=workers) if workers > 1 and games > 1 else None
+    try:
+        while played < games:
+            chunk = range(played, min(games, played + chunk_size))
+            jobs = [
+                (index, seed + index, candidate, current, index % 2, iterations, rollout_depth, branch_limit, max_turns)
+                for index in chunk
+            ]
+            outcomes = list(executor.map(_evaluation_job, jobs)) if executor else [_evaluation_job(job) for job in jobs]
+            for game_index, result in outcomes:
+                candidate_player = game_index % 2
+                winner = result["winner"]
+                if winner == candidate_player:
+                    candidate_wins += 1
+                elif winner is None:
+                    draws += 1
+                else:
+                    current_wins += 1
+                score = result["final_score"]
+                total_margin += score[candidate_player] - score[1 - candidate_player]
+                illegal_actions += result["illegal_actions"]
+                crashes += result["crashes"]
+                total_turns += result["turn_count"]
+            played += len(jobs)
+            # Stop early once the remaining games can no longer change which
+            # side has more wins.
+            if played < games and abs(candidate_wins - current_wins) > games - played:
+                early_stopped = True
+                break
+    finally:
+        if executor is not None:
+            executor.shutdown()
     return {
-        "games": games,
+        "games": played,
         "candidate_wins": candidate_wins,
         "current_wins": current_wins,
         "draws": draws,
-        "average_vp_margin": round(total_margin / games, 3),
+        "average_vp_margin": round(total_margin / played, 3),
         "illegal_actions": illegal_actions,
         "crashes": crashes,
-        "average_turns": round(total_turns / games, 2),
+        "average_turns": round(total_turns / played, 2),
+        "early_stopped": early_stopped,
     }
 
 
@@ -554,6 +671,7 @@ def build_eval_report(
     rollout_depth: int,
     branch_limit: int,
     max_turns: int,
+    workers: int = 1,
 ) -> dict[str, Any]:
     candidate = load_value_network(candidate_path)
     if candidate is None:
@@ -573,6 +691,7 @@ def build_eval_report(
         rollout_depth=rollout_depth,
         branch_limit=branch_limit,
         max_turns=max_turns,
+        workers=workers,
     )
     return {
         "candidate": str(candidate_path),
@@ -827,6 +946,7 @@ def _evaluate_history(
     rollout_depth: int,
     branch_limit: int,
     max_turns: int,
+    workers: int = 1,
 ) -> list[dict[str, Any]]:
     evaluations: list[dict[str, Any]] = []
     for index, network in enumerate(history_networks[:3]):
@@ -834,15 +954,67 @@ def _evaluate_history(
             candidate=candidate,
             current=network,
             seed=seed + index * 100,
-            games=1,
+            games=2,
             iterations=iterations,
             rollout_depth=rollout_depth,
             branch_limit=branch_limit,
             max_turns=max_turns,
+            workers=workers,
         )
         summary["history_index"] = index
         evaluations.append(summary)
     return evaluations
+
+
+METRICS_CSV_FIELDS = [
+    "time",
+    "cycle",
+    "seed",
+    "games",
+    "latest_examples",
+    "buffer_examples",
+    "learning_rate",
+    "loss_before",
+    "loss_after",
+    "value_loss_after",
+    "policy_loss_after",
+    "eval_games",
+    "candidate_wins",
+    "current_wins",
+    "draws",
+    "average_vp_margin",
+    "eval_early_stopped",
+    "accepted",
+    "average_turns",
+    "illegal_actions",
+    "crashes",
+]
+
+
+def _append_metrics_csv(path: Path, row: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_header = not path.exists()
+    with path.open("a", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=METRICS_CSV_FIELDS)
+        if write_header:
+            writer.writeheader()
+        writer.writerow({key: row.get(key, "") for key in METRICS_CSV_FIELDS})
+
+
+def _compact_dataset(path: Path, max_games: int) -> None:
+    """Keep only the newest max_games self-play games (one JSONL line each)."""
+    if max_games <= 0 or not path.exists():
+        return
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            lines = [line for line in handle if line.strip()]
+    except OSError:
+        return
+    if len(lines) <= max_games:
+        return
+    temp_target = path.with_name(f".{path.name}.tmp")
+    temp_target.write_text("".join(lines[-max_games:]), encoding="utf-8")
+    temp_target.replace(path)
 
 
 def _update_leaderboard(path: Path, entry: dict[str, Any]) -> None:
@@ -887,7 +1059,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--log-file", type=Path, default=DEFAULT_LOG_PATH, help="continuous-training JSON log path")
     parser.add_argument("--history-opponent-rate", type=float)
     parser.add_argument("--history-opponents", type=int)
-    parser.add_argument("--accept-vp-margin", type=float, default=-0.25)
+    parser.add_argument("--accept-vp-margin", type=float, default=0.0)
+    parser.add_argument("--workers", type=int, default=0, help="parallel self-play/eval processes; 0 = auto (cpu count - 1)")
+    parser.add_argument("--lr-decay", type=float, default=0.995, help="learning-rate multiplier applied per continuous cycle")
+    parser.add_argument("--metrics-csv", type=Path, default=DEFAULT_METRICS_CSV_PATH, help="chart-friendly per-cycle CSV path")
+    parser.add_argument("--no-metrics-csv", action="store_true", help="do not append per-cycle metrics CSV rows")
+    parser.add_argument(
+        "--dataset-max-games",
+        type=int,
+        default=4000,
+        help="compact the self-play JSONL to at most this many newest games (0 disables)",
+    )
     parser.add_argument("--fresh", action="store_true", help="ignore the existing NN checkpoint and start a new network")
     parser.add_argument("--continuous", action="store_true", help="keep training and checkpointing until the process is stopped")
     parser.add_argument("--sleep-seconds", type=float, default=0.0, help="pause between continuous training cycles")
@@ -922,6 +1104,8 @@ def main(argv: list[str] | None = None) -> int:
         "history_opponents": args.history_opponents if args.history_opponents is not None else defaults["history_opponents"],
     }
     dataset_path = None if args.no_dataset else args.dataset
+    workers = args.workers if args.workers > 0 else max(1, (os.cpu_count() or 2) - 1)
+    metrics_csv = None if args.no_metrics_csv else args.metrics_csv
 
     if args.eval_report:
         report_games = args.eval_games if args.eval_games is not None else 50
@@ -935,6 +1119,7 @@ def main(argv: list[str] | None = None) -> int:
             rollout_depth=settings["rollout_depth"],
             branch_limit=settings["branch_limit"],
             max_turns=settings["max_turns"],
+            workers=workers,
         )
         print(json.dumps(report, indent=2))
         return 0
@@ -953,6 +1138,7 @@ def main(argv: list[str] | None = None) -> int:
             rollout_depth=settings["rollout_depth"],
             branch_limit=settings["branch_limit"],
             max_turns=settings["max_turns"],
+            workers=workers,
         )
         print(json.dumps(summary, indent=2))
         return 0
@@ -968,6 +1154,10 @@ def main(argv: list[str] | None = None) -> int:
             history_dir=args.history_dir,
             leaderboard_path=args.leaderboard,
             accept_vp_margin=args.accept_vp_margin,
+            workers=workers,
+            lr_decay=args.lr_decay,
+            metrics_csv=metrics_csv,
+            dataset_max_games=args.dataset_max_games,
             **settings,
         )
         return 0
@@ -980,6 +1170,9 @@ def main(argv: list[str] | None = None) -> int:
         history_dir=args.history_dir,
         leaderboard_path=args.leaderboard,
         accept_vp_margin=args.accept_vp_margin,
+        workers=workers,
+        metrics_csv=metrics_csv,
+        dataset_max_games=args.dataset_max_games,
         **settings,
     )
     print(json.dumps(summary, indent=2))
