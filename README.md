@@ -62,7 +62,7 @@ python -m catan_engine.simulator --bot-a mcts --bot-b mcts --games 10 --seed 0 -
 
 ## How the model works
 
-We use Monte Carlo tree search guided by two evaluators: a hand-tuned heuristic (`mcts_bot.py`, weights evolved by `train_mcts.py`) and a small neural network (`value_network.py`). Search uses Polynomial Upper Confidence Trees (PUCT), as in AlphaZero: the network's policy suggests which moves are worth exploring, a heuristic orders and prunes the rest, and short rollouts score leaf positions — 70% network win-probability, 30% heuristic. Every move comes from the engine's legal-action list (`get_legal_actions(state)`).
+We use Monte Carlo tree search guided by two evaluators: a hand-tuned heuristic (`mcts_bot.py`, weights evolved by `train_mcts.py`) and a small neural network (`value_network.py`). Search uses Predictor + Upper Confidence bounds applied to Trees (PUCT), as in AlphaZero: the network's policy suggests which moves are worth exploring, a heuristic orders and prunes the rest, and short rollouts score leaf positions — 70% network win-probability, 30% heuristic. Every move comes from the engine's legal-action list (`get_legal_actions(state)`).
 
 ```text
 ENGINE / SEARCH LOOP  (rules-owned, every move legal-checked)
