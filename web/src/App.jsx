@@ -7,7 +7,9 @@ import PlayerPanel from "./components/PlayerPanel.jsx";
 import BankPanel from "./components/BankPanel.jsx";
 import SummaryPanel from "./components/SummaryPanel.jsx";
 import LegendModal from "./components/LegendModal.jsx";
+import AuthPanel from "./components/AuthPanel.jsx";
 import * as api from "./api.js";
+import { supabase } from "./supabase.js";
 import { actionLabel, BOT_ID, HUMAN_ID, logLine, PLAYER_NAMES, resourceGainLines } from "./format.js";
 
 const BOT_THINK_DELAY_MS = 900;
@@ -39,6 +41,7 @@ export default function App() {
   const [botStatus, setBotStatus] = useState(null);
   const [botVersion, setBotVersion] = useState(null);
   const [payoutFx, setPayoutFx] = useState(null); // { number, fxId } — retriggers the dice payout flash
+  const [session, setSession] = useState(null); // Supabase auth session, or null if signed out/unconfigured
 
   const startedRef = useRef(false);
   const botRunningRef = useRef(false);
@@ -150,6 +153,21 @@ export default function App() {
       cancelled = true;
       clearInterval(interval);
     };
+  }, []);
+
+  // Track the Supabase session (if configured) and forward its token to the
+  // API client so finished games get tied to the signed-in user.
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+      api.setAuthToken(data.session?.access_token);
+    });
+    const { data: subscription } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession);
+      api.setAuthToken(newSession?.access_token);
+    });
+    return () => subscription.subscription.unsubscribe();
   }, []);
 
   const handleAction = useCallback(
@@ -408,6 +426,7 @@ export default function App() {
         </aside>
 
         <aside className="right-col">
+          <AuthPanel session={session} />
           <SummaryPanel state={state} />
           <BankPanel state={state} />
           <ActionLog entries={log} />

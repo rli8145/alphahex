@@ -198,6 +198,21 @@ h3 {
   font-size: 13px;
 }
 
+/* ---- Account panel (Supabase sign-in) ---- */
+.auth-hint {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+.auth-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.auth-panel .btn-secondary {
+  width: 100%;
+}
+
 /* ---- Banners (centered over the board) ---- */
 .banners {
   position: fixed;

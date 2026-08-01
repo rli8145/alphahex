@@ -1,5 +1,6 @@
-# Training only - the live app deploys through Vercel, not this file.
-# Usage mirrors the README's `python -m catan_bots.train_...` commands:
+# Local dev only - the live app deploys through Vercel, not this file.
+#
+# Training: usage mirrors the README's `python -m catan_bots.train_...` commands:
 #
 #   docker compose build train
 #   docker compose run --rm train --profile offline --continuous --seed 0
@@ -9,7 +10,23 @@
 # ./packages/catan_bots on the host (bind-mounted), same paths the README
 # describes, so training survives container restarts and the live server
 # can hot-reload mcts_value_network.json without a rebuild.
+#
+# Postgres: a local database for `catan_api.db` (game history). Point the API
+# at it with `export DATABASE_URL=postgresql://catan:catan@localhost:5432/catan`
+# before running uvicorn - see README. Production uses Vercel's own Postgres
+# integration instead, not this container.
 services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: catan
+      POSTGRES_PASSWORD: catan
+      POSTGRES_DB: catan
+    ports:
+      - "5432:5432"
+    volumes:
+      - catan-db:/var/lib/postgresql/data
+
   train:
     build:
       context: .
@@ -27,3 +44,6 @@ services:
     volumes:
       - ./data:/app/data
       - ./packages/catan_bots:/app/packages/catan_bots
+
+volumes:
+  catan-db:
