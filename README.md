@@ -38,7 +38,16 @@ python -m catan_bots.train_mcts --seed 0
 # --rollout-depth, --branch-limit, --fresh, --continuous
 ```
 
-Live checkpoints: `packages/catan_bots/mcts_value_network.json` (NN, hot-reloaded by the server) and `mcts_weights.json` (heuristic). Training artifacts - replay buffer, checkpoint history, leaderboard, JSON logs, per-cycle `train_metrics.csv` - live under `data/training/` (gitignored). Useful flags: `--workers` (parallel self-play/eval, default cpu−1), `--lr-decay`, `--dataset-max-games`, `--eval-report`, `--fresh`.
+Or in Docker, which pins the training environment and skips the local venv/PyTorch
+setup (training only - the live app deploys separately, see below):
+
+```bash
+docker compose build train
+docker compose run --rm train --profile offline --continuous --seed 0
+docker compose run --rm train-heuristic --generations 20 --continuous
+```
+
+Live checkpoints: `packages/catan_bots/mcts_value_network.json` (NN, hot-reloaded by the server) and `mcts_weights.json` (heuristic). Training artifacts - replay buffer, checkpoint history, leaderboard, JSON logs, per-cycle `train_metrics.csv` - live under `data/training/` (gitignored; bind-mounted in Docker so they persist the same way). Useful flags: `--workers` (parallel self-play/eval, default cpu−1), `--lr-decay`, `--dataset-max-games`, `--eval-report`, `--fresh`.
 
 ## Deploy
 

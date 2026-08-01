@@ -15,3 +15,4 @@ node_modules/
 *.egg-info/
 web/dist/
 .vercel
+.env*

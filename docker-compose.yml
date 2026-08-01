@@ -1,0 +1,29 @@
+# Training only - the live app deploys through Vercel, not this file.
+# Usage mirrors the README's `python -m catan_bots.train_...` commands:
+#
+#   docker compose build train
+#   docker compose run --rm train --profile offline --continuous --seed 0
+#   docker compose run --rm train-heuristic --generations 20 --continuous
+#
+# Checkpoints/leaderboard/replay buffer land in ./data/training and
+# ./packages/catan_bots on the host (bind-mounted), same paths the README
+# describes, so training survives container restarts and the live server
+# can hot-reload mcts_value_network.json without a rebuild.
+services:
+  train:
+    build:
+      context: .
+      dockerfile: Dockerfile.train
+    volumes:
+      - ./data:/app/data
+      - ./packages/catan_bots:/app/packages/catan_bots
+
+  train-heuristic:
+    build:
+      context: .
+      dockerfile: Dockerfile.train
+    entrypoint: ["python", "-m", "catan_bots.train_mcts"]
+    command: ["--seed", "0"]
+    volumes:
+      - ./data:/app/data
+      - ./packages/catan_bots:/app/packages/catan_bots

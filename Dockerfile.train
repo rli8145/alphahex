@@ -1,0 +1,24 @@
+# Reproducible training environment for the MCTS/NN self-play trainers.
+# Not used by the live app - Vercel builds api/index.py directly from
+# requirements.txt (no PyTorch, stays under the serverless bundle limit).
+#
+# Build:
+#   docker build -f Dockerfile.train -t catan-train .
+# Run (mirrors `python -m catan_bots.train_mcts_nn ...` from the README):
+#   docker compose run --rm train --profile offline --seed 0
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Torch wheels are large; install them in their own layer so code changes
+# below don't bust the cache.
+COPY pyproject.toml ./
+COPY packages ./packages
+RUN pip install --no-cache-dir -e ".[training]"
+
+COPY . .
+
+# Self-play scales with CPU count; give the container all of them and let
+# --workers (default: cpu count - 1) figure out parallelism itself.
+ENTRYPOINT ["python", "-m", "catan_bots.train_mcts_nn"]
+CMD ["--profile", "offline", "--seed", "0"]

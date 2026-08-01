@@ -1,0 +1,11 @@
+.venv/
+.git/
+node_modules/
+web/node_modules/
+web/dist/
+web/.vite/
+data/
+*.egg-info/
+__pycache__/
+.vercel/
+.env*
