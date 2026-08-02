@@ -40,4 +40,7 @@ async function get(path) {
 export const newGame = (seed = 0) => post("/games/new", { seed });
 export const applyAction = (state, action) => post("/games/action", { state, action });
 export const botStep = (state) => post("/games/bot-step", { state });
-export const botVersion = () => get("/bots/version");
+
+// Recent completed games for the signed-in user (requires an auth token, see
+// setAuthToken above); returns { games: [] } if signed out or unconfigured.
+export const myGameHistory = (limit = 20) => get(`/games/history/me?limit=${limit}`);

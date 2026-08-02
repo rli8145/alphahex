@@ -11,8 +11,8 @@ A standalone 1v1 version of *Settlers of Catan*, played against an AlphaZero-sty
 - `packages/catan_engine/` - rules engine, board generation, simulator
 - `packages/catan_bots/` - MCTS agent (heuristic eval + neural value/policy network) and trainers
 - `packages/catan_api/` - FastAPI backend
-- `web/` - React/Vite client
-- `api/` + `vercel.json` - Vercel config for the live site (don't delete; deploys break without them)
+- `web/` - React/Vite client 
+- `api/` + `vercel.json` - Vercel config
 
 ## Run it locally
 
@@ -22,13 +22,10 @@ python -m venv .venv && .venv/bin/pip install -r requirements.txt
 cd web && npm install && npm run dev   # http://localhost:5173, proxies /api -> :8000
 ```
 
-## Database
+## Database and User Accounts
 
 Supabase Postgres records completed games for `GET /games/history`.
-
 - Local: `docker compose up -d db`, then `export DATABASE_URL=postgresql://catan:catan@localhost:5432/catan`
-
-## Accounts
 
 Sign in via [Supabase Auth](https://supabase.com/docs/guides/auth) (GitHub + Google OAuth) to accounts with game history. Otherwise, users can play as guest.
 

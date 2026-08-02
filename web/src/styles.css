@@ -157,6 +157,7 @@ h3 {
   padding: 12px 14px;
 }
 .turn-indicator {
+  flex: 1 1 auto;
   font-size: 10.5px;
   letter-spacing: 0.03em;
   text-transform: uppercase;
@@ -167,30 +168,6 @@ h3 {
 .turn-indicator strong {
   color: var(--ink);
 }
-.bot-version {
-  flex: 1 1 auto;
-  min-width: 0;
-  padding: 5px 7px;
-  border: 1px solid var(--rule-soft);
-  border-radius: 7px;
-  color: var(--ink-soft);
-  background: rgba(255, 250, 238, 0.48);
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 1.15;
-  text-align: center;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.bot-version.neural {
-  color: #1f5b40;
-  border-color: rgba(55, 126, 88, 0.55);
-  background: rgba(218, 239, 223, 0.7);
-}
-.bot-version.heuristic {
-  color: var(--ink-soft);
-}
 .topbar .btn-secondary {
   flex: 0 0 auto;
   width: auto;
@@ -198,7 +175,70 @@ h3 {
   font-size: 13px;
 }
 
-/* ---- Account panel (Supabase sign-in) ---- */
+/* ---- Account panel (Supabase sign-in + game history) ---- */
+.user-panel {
+  padding: 8px;
+}
+.user-button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  background: none;
+  border: none;
+  padding: 4px 5px;
+  cursor: pointer;
+  color: var(--ink);
+  border-radius: 7px;
+  transition: background 0.12s ease;
+}
+.user-button:hover {
+  background: var(--panel-2);
+}
+.user-avatar {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(180deg, #cf9a3a, var(--brass-deep));
+  color: #fff8ea;
+  font-size: 12px;
+  font-weight: 800;
+}
+.user-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.user-button-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.user-caret {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--ink-soft);
+  transition: transform 0.15s ease;
+}
+.user-caret.open {
+  transform: rotate(180deg);
+}
+
+.user-dropdown {
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--rule-soft);
+}
 .auth-hint {
   margin: 0 0 10px;
   font-size: 12px;
@@ -209,8 +249,97 @@ h3 {
   flex-direction: column;
   gap: 6px;
 }
-.auth-panel .btn-secondary {
+.user-panel .btn-secondary {
   width: 100%;
+}
+.btn-oauth {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 11px;
+  border: 1px solid var(--rule);
+  background: var(--panel);
+  color: var(--ink);
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s ease, box-shadow 0.12s ease;
+}
+.btn-oauth:hover {
+  background: #e6d6b3;
+}
+.btn-oauth svg {
+  flex: 0 0 auto;
+}
+
+.user-info {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 12px;
+}
+.user-info-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.user-info-email {
+  font-size: 11.5px;
+  color: var(--ink-soft);
+}
+
+.history-section {
+  margin-bottom: 12px;
+}
+.history-section h3 {
+  margin: 0 0 7px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-weight: 700;
+  color: var(--ink-soft);
+}
+.history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  max-height: 160px;
+  overflow-y: auto;
+}
+.history-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--rule-soft);
+  font-size: 12px;
+}
+.history-row:last-child {
+  border-bottom: none;
+}
+.history-result {
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+.history-result.win {
+  color: #1f5b40;
+}
+.history-result.lose {
+  color: var(--ink-soft);
+}
+.history-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: right;
+  color: var(--ink-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ---- Banners (centered over the board) ---- */
@@ -619,7 +748,7 @@ h3 {
   border: 1px solid rgba(61, 44, 24, 0.28);
   color: #2c2418;
   font-family: "Archivo", sans-serif;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 800;
   line-height: 20px;
   text-align: center;
@@ -1164,7 +1293,7 @@ button:disabled {
   border: 1px solid rgba(61, 44, 24, 0.28);
   color: #2c2418;
   font-family: "Archivo", sans-serif;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 800;
 }
 .res-chip-ratio {
@@ -1294,7 +1423,7 @@ button:disabled {
   border: 1px solid rgba(61, 44, 24, 0.28);
   color: #2c2418;
   font-family: "Archivo", sans-serif;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 800;
 }
 .bank-count {
@@ -1366,7 +1495,7 @@ button:disabled {
   border: 1px solid rgba(61, 44, 24, 0.24);
   color: #2c2418;
   font-family: "Archivo", sans-serif;
-  font-size: 9px;
+  font-size: 10.5px;
   font-weight: 800;
   line-height: 1;
 }
@@ -1524,24 +1653,35 @@ button:disabled {
   width: 100%;
   border-collapse: collapse;
   font-size: 13px;
+  font-variant-numeric: tabular-nums;
 }
 .summary-table th {
-  text-align: right;
+  text-align: center;
   font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
   color: var(--ink-soft);
-  padding: 2px 4px;
+  padding: 0 2px 6px;
   font-weight: 700;
+  border-bottom: 1px solid var(--rule-soft);
+  white-space: nowrap;
+}
+.summary-th-label {
+  display: block;
+  margin-top: 1px;
+  font-size: 8.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 .summary-table th:first-child,
 .summary-table td.summary-name {
   text-align: left;
 }
 .summary-table td {
-  text-align: right;
-  padding: 3px 4px;
+  text-align: center;
+  padding: 7px 2px;
   font-weight: 600;
+}
+.summary-table tr:not(:last-child) td {
+  border-bottom: 1px dashed var(--rule-soft);
 }
 .summary-dot {
   display: inline-block;
@@ -1567,8 +1707,7 @@ button:disabled {
   font-weight: 600;
 }
 .summary-road-note {
-  margin: 8px 0 0;
-  font-size: 12px;
+  margin: 10px 0 0;
   color: var(--ink-soft);
 }
 

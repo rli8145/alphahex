@@ -8,11 +8,11 @@ export const PLAYER_NAMES = { 0: "You", 1: "AlphaHex" };
 export const PLAYER_COLORS = { 0: "#c1432f", 1: "#2d5f86" };
 
 export const RESOURCE_META = {
-  LUMBER: { label: "Lumber", color: "#2f7d3b", icon: "L" },
-  BRICK: { label: "Brick", color: "#b5562a", icon: "B" },
-  WOOL: { label: "Wool", color: "#7bc043", icon: "W" },
-  GRAIN: { label: "Grain", color: "#e0b13a", icon: "G" },
-  ORE: { label: "Ore", color: "#6b7280", icon: "O" },
+  LUMBER: { label: "Lumber", color: "#2f7d3b", icon: "🪵" },
+  BRICK: { label: "Brick", color: "#b5562a", icon: "🧱" },
+  WOOL: { label: "Wool", color: "#7bc043", icon: "🐑" },
+  GRAIN: { label: "Grain", color: "#e0b13a", icon: "🌾" },
+  ORE: { label: "Ore", color: "#6b7280", icon: "🪨" },
 };
 
 export const HEX_META = {

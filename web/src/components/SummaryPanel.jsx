@@ -53,10 +53,10 @@ export default function SummaryPanel({ state }) {
         <thead>
           <tr>
             <th></th>
-            <th title="Victory points (opponent hidden dev cards not shown)">VP</th>
-            <th title="Expected production pips per roll (robber excluded)">Prod</th>
-            <th title="Longest single road chain">Road</th>
-            <th title="Knights played">Army</th>
+            <th title="Victory points (opponent hidden dev cards not shown)">🏆<span className="summary-th-label">VP</span></th>
+            <th title="Expected production pips per roll (robber excluded)">🎲<span className="summary-th-label">Prod</span></th>
+            <th title="Longest single road chain">🛣️<span className="summary-th-label">Road</span></th>
+            <th title="Knights played">⚔️<span className="summary-th-label">Army</span></th>
           </tr>
         </thead>
         <tbody>
@@ -83,7 +83,7 @@ export default function SummaryPanel({ state }) {
           ))}
         </tbody>
       </table>
-      <p className="summary-road-note">{roadNote}</p>
+      <p className="board-hint summary-road-note">{roadNote}</p>
     </div>
   );
 }
