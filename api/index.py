@@ -1,14 +1,13 @@
 """Vercel serverless entrypoint for the Catan FastAPI backend.
 
-The repo keeps its Python packages under packages/*, which are normally put on
-PYTHONPATH; on Vercel we add them to sys.path here instead.
+The repo keeps its Python packages under packages/, which is normally put on
+PYTHONPATH; on Vercel we add it to sys.path here instead.
 """
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-for package in ("engine", "bots", "api"):
-    sys.path.insert(0, str(ROOT / "packages" / package))
+sys.path.insert(0, str(ROOT / "packages"))
 
 from catan_api.app import app as catan_app  # noqa: E402
 

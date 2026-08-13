@@ -19,5 +19,5 @@ training = [
 ]
 
 [tool.setuptools.packages.find]
-where = ["packages/engine", "packages/bots", "packages/api"]
+where = ["packages"]
 include = ["catan_engine*", "catan_bots*", "catan_api*"]

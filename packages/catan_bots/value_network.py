@@ -882,7 +882,7 @@ def _normalize_policy_bias(values: Any) -> Any:
 
 def _require_torch() -> None:
     if torch is None or F is None:
-        raise RuntimeError("PyTorch is required for model training; install requirements.txt locally.")
+        raise RuntimeError('PyTorch is required for model training; install with `pip install -e ".[training]"`.')
 
 
 def _has_torch_weights(value: Any) -> bool:

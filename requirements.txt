@@ -1,4 +1,1 @@
-fastapi>=0.110
-numpy>=1.26
-uvicorn[standard]>=0.27
 -e .
