@@ -1,6 +1,6 @@
 # AlphaHex
 
-<img src="banner.jpg" alt="AlphaHex — 1v1 Catan" width="100%" />
+<img src="banner-ink.svg" alt="AlphaHex — 1v1 Catan" width="100%" />
 
 A standalone 1v1 version of *Settlers of Catan*, played against an AlphaZero-style MCTS bot.
 
