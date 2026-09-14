@@ -24,39 +24,13 @@ cd web && npm install && npm run dev   # http://localhost:5173, proxies /api -> 
 
 ## Database
 
-Postgres is optional - `catan_api/db.py` records each completed game (seed, winner,
-turn/move counts, signed-in user if any) for `GET /games/history`; every route
-still works with no database configured, it just skips persistence silently.
+Supabase Postgres records completed games for `GET /games/history`.
 
-Local: `docker compose up -d db`, then `export DATABASE_URL=postgresql://catan:catan@localhost:5432/catan` before starting uvicorn.
-
-Production: use [Supabase](https://supabase.com) - Postgres plus the Auth provider
-below in one project. Add it to the `catan` Vercel project via the Storage tab's
-marketplace integration (auto-injects `DATABASE_URL`), or set it by hand from
-Supabase's Project Settings -> Database. Schema applies itself lazily on first use.
+- Local: `docker compose up -d db`, then `export DATABASE_URL=postgresql://catan:catan@localhost:5432/catan`
 
 ## Accounts
 
-Sign-in is optional and additive - `web/src/supabase.js` / `AuthPanel` are no-ops
-without the env vars below, so anonymous play is unaffected. Uses [Supabase
-Auth](https://supabase.com/docs/guides/auth) (GitHub + Google OAuth) on the same
-Supabase project as the database above.
-
-Setup, once per project:
-
-1. Auth -> Providers: enable GitHub/Google with their OAuth app credentials;
-   callback URL is `https://<project-ref>.supabase.co/auth/v1/callback`.
-2. Auth -> URL Configuration: allow `http://localhost:5173` and
-   `https://alphahex.vercel.app` as redirect URLs.
-3. Env vars (Vercel + local shell): `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`
-   for the frontend (Project Settings -> API, safe to expose - scoped by RLS, not
-   secrecy), plus `SUPABASE_URL` (same URL, no `VITE_` prefix) for the backend.
-
-The backend verifies tokens against Supabase's public JWKS endpoint
-(`<SUPABASE_URL>/auth/v1/.well-known/jwks.json`) rather than a shared secret -
-Supabase moved every project to asymmetric JWT signing in late 2025, so
-there's no secret to copy. No `SUPABASE_URL` set -> `catan_api/auth.py`
-always resolves an anonymous caller, same as before this existed.
+Sign in via [Supabase Auth](https://supabase.com/docs/guides/auth) (GitHub + Google OAuth) to accounts with game history. Otherwise, users can play as guest.
 
 ## Train the agent
 
@@ -84,20 +58,6 @@ docker compose run --rm train-heuristic --generations 20 --continuous
 ```
 
 Live checkpoints: `packages/catan_bots/mcts_value_network.json` (NN, hot-reloaded by the server) and `mcts_weights.json` (heuristic). Training artifacts - replay buffer, checkpoint history, leaderboard, JSON logs, per-cycle `train_metrics.csv` - live under `data/training/` (gitignored; bind-mounted in Docker so they persist the same way). Useful flags: `--workers` (parallel self-play/eval, default cpu−1), `--lr-decay`, `--dataset-max-games`, `--eval-report`, `--fresh`.
-
-## Deploy
-
-Production deploys run through `.github/workflows/vercel-production.yml` on every
-push to `main`. The workflow targets the linked Vercel project IDs and needs one
-GitHub secret:
-
-```text
-VERCEL_TOKEN
-```
-
-Runtime installs use `requirements.txt` (just `-e .`, no PyTorch), keeping
-Vercel's Python function under the serverless bundle limit. Local training
-additionally installs the `training` extra (see above), which pulls in PyTorch.
 
 ## Simulate agent vs agent
 
