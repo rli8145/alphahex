@@ -56,6 +56,8 @@ docker compose run --rm train-heuristic --generations 20 --continuous
 
 Live checkpoints: `packages/catan_bots/mcts_value_network.json` (NN, hot-reloaded by the server) and `mcts_weights.json` (heuristic). Training artifacts - replay buffer, checkpoint history, leaderboard, JSON logs, per-cycle `train_metrics.csv` - live under `data/training/` (gitignored; bind-mounted in Docker so they persist the same way). Useful flags: `--workers` (parallel self-play/eval, default cpu−1), `--lr-decay`, `--dataset-max-games`, `--eval-report`, `--fresh`.
 
+Previously trained weights are preserved in the [checkpoint archive](checkpoints/README.md), with a SHA-256 manifest. The archived neural networks use the older 87-feature encoder and are incompatible with the current 95-feature engine; none is marked serving-ready. They are excluded from deployment bundles. The heuristic weights remain loadable with the current engine. A current NN must be trained and pass the acceptance gates before the app will use it.
+
 ## Simulate agent vs agent
 
 ```bash

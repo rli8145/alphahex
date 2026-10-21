@@ -1,0 +1,2 @@
+# Preserve archived checkpoint bytes so manifest SHA-256 hashes survive checkout.
+checkpoints/**/*.json -text

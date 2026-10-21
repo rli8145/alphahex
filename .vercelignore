@@ -3,6 +3,7 @@ node_modules
 web/node_modules
 web/dist
 data
+checkpoints
 *.egg-info
 __pycache__
 packages/catan_bots/mcts_value_network.json

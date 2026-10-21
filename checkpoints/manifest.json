@@ -1,0 +1,252 @@
+{
+  "schema_version": 1,
+  "archived_on": "2026-10-20",
+  "source_repository": "https://github.com/rli8145/alphahex",
+  "audited_commit": "4d5c0e22ddcdeda87250536f9de1389211731904",
+  "files": [
+    {
+      "path": "heuristic/mcts_weights.json",
+      "source_path": "packages/bots/catan_bots/mcts_weights.json",
+      "bytes": 1228,
+      "sha256": "4b57c606581ebbeac5df8cfbac7029156a46a12ad8b38abe9f3a7aec3aed01af",
+      "kind": "mcts_heuristic_weights",
+      "training_seed": 21000000,
+      "current_engine_compatible": true,
+      "accepted_generations": 1
+    },
+    {
+      "path": "neural/mcts_value_network.json",
+      "source_path": "packages/bots/catan_bots/mcts_value_network.json",
+      "bytes": 657026,
+      "sha256": "cd0e71b6e99fc8119be2758aea34744972c04c17155b9cce2b27d6ebeb0eff61",
+      "kind": "mcts_value_network",
+      "training_seed": 11000000,
+      "architecture": {
+        "input_features": 87,
+        "hidden_units": 32,
+        "policy_labels": 522
+      },
+      "recorded_cycle_accepted": false,
+      "serving_ready": false,
+      "current_engine_compatible": false,
+      "historical_architecture_commit": "44a79cb",
+      "board_rule_version": "random_start_balanced_board_random_ports_friendly_robber_exact_policy_v1"
+    },
+    {
+      "path": "neural/history/value_network_1782807477_10000000.json",
+      "source_path": "data/training/checkpoints/value_network_1782807477_10000000.json",
+      "bytes": 109004,
+      "sha256": "82129a087e81a54acdc0c607263d319f9371061c2890a920089dd022f8fef392",
+      "kind": "mcts_value_network",
+      "training_seed": 10000000,
+      "architecture": {
+        "input_features": 87,
+        "hidden_units": 32,
+        "policy_labels": 16
+      },
+      "recorded_cycle_accepted": true,
+      "serving_ready": false,
+      "current_engine_compatible": false,
+      "historical_architecture_commit": "5363fc1",
+      "board_rule_version": "random_start_balanced_board_random_ports_friendly_robber"
+    },
+    {
+      "path": "neural/history/value_network_1782808642_12000000.json",
+      "source_path": "data/training/checkpoints/value_network_1782808642_12000000.json",
+      "bytes": 108930,
+      "sha256": "a09a3bb52f4c73189cf00eddcab18287d92f6a6c4829024e87f9e6d3c3d3c0f0",
+      "kind": "mcts_value_network",
+      "training_seed": 12000000,
+      "architecture": {
+        "input_features": 87,
+        "hidden_units": 32,
+        "policy_labels": 16
+      },
+      "recorded_cycle_accepted": true,
+      "serving_ready": false,
+      "current_engine_compatible": false,
+      "historical_architecture_commit": "5363fc1",
+      "board_rule_version": "random_start_balanced_board_random_ports_friendly_robber"
+    },
+    {
+      "path": "neural/history/value_network_1782810072_14000000.json",
+      "source_path": "data/training/checkpoints/value_network_1782810072_14000000.json",
+      "bytes": 108968,
+      "sha256": "1622a2c246a54892d5e4f30b35d717442dea21d97cacd3ebad6319c093962174",
+      "kind": "mcts_value_network",
+      "training_seed": 14000000,
+      "architecture": {
+        "input_features": 87,
+        "hidden_units": 32,
+        "policy_labels": 16
+      },
+      "recorded_cycle_accepted": true,
+      "serving_ready": false,
+      "current_engine_compatible": false,
+      "historical_architecture_commit": "5363fc1",
+      "board_rule_version": "random_start_balanced_board_random_ports_friendly_robber"
+    },
+    {
+      "path": "neural/history/value_network_1782810826_15000000.json",
+      "source_path": "data/training/checkpoints/value_network_1782810826_15000000.json",
+      "bytes": 108954,
+      "sha256": "73abe5531bd555c572777d8ce30c83320f0f4f334e2798b91585fd915cf3d46e",
+      "kind": "mcts_value_network",
+      "training_seed": 15000000,
+      "architecture": {
+        "input_features": 87,
+        "hidden_units": 32,
+        "policy_labels": 16
+      },
+      "recorded_cycle_accepted": true,
+      "serving_ready": false,
+      "current_engine_compatible": false,
+      "historical_architecture_commit": "5363fc1",
+      "board_rule_version": "random_start_balanced_board_random_ports_friendly_robber"
+    },
+    {
+      "path": "neural/history/value_network_1782812184_17000000.json",
+      "source_path": "data/training/checkpoints/value_network_1782812184_17000000.json",
+      "bytes": 108906,
+      "sha256": "853fa97b7f2e072254d4dfc1e64ecd4bf6a8a24965222d730ab15c47e0655489",
+      "kind": "mcts_value_network",
+      "training_seed": 17000000,
+      "architecture": {
+        "input_features": 87,
+        "hidden_units": 32,
+        "policy_labels": 16
+      },
+      "recorded_cycle_accepted": true,
+      "serving_ready": false,
+      "current_engine_compatible": false,
+      "historical_architecture_commit": "5363fc1",
+      "board_rule_version": "random_start_balanced_board_random_ports_friendly_robber"
+    },
+    {
+      "path": "neural/history/value_network_1782814635_21000000.json",
+      "source_path": "data/training/checkpoints/value_network_1782814635_21000000.json",
+      "bytes": 108908,
+      "sha256": "53aa5ad63aeec133b16407634a078b047ea19d5e11184e5b434d322e9e5938b1",
+      "kind": "mcts_value_network",
+      "training_seed": 21000000,
+      "architecture": {
+        "input_features": 87,
+        "hidden_units": 32,
+        "policy_labels": 16
+      },
+      "recorded_cycle_accepted": true,
+      "serving_ready": false,
+      "current_engine_compatible": false,
+      "historical_architecture_commit": "5363fc1",
+      "board_rule_version": "random_start_balanced_board_random_ports_friendly_robber"
+    },
+    {
+      "path": "neural/history/value_network_1782815340_22000000.json",
+      "source_path": "data/training/checkpoints/value_network_1782815340_22000000.json",
+      "bytes": 108903,
+      "sha256": "fae54eddb4283e3c9634f1e04d034f5f412437494a168fce8c2bbd1e901c2a60",
+      "kind": "mcts_value_network",
+      "training_seed": 22000000,
+      "architecture": {
+        "input_features": 87,
+        "hidden_units": 32,
+        "policy_labels": 16
+      },
+      "recorded_cycle_accepted": true,
+      "serving_ready": false,
+      "current_engine_compatible": false,
+      "historical_architecture_commit": "5363fc1",
+      "board_rule_version": "random_start_balanced_board_random_ports_friendly_robber"
+    },
+    {
+      "path": "neural/history/value_network_1782816560_24000000.json",
+      "source_path": "data/training/checkpoints/value_network_1782816560_24000000.json",
+      "bytes": 108839,
+      "sha256": "5ddabd486e30a82209b6f3a812a1c46a150f6896f2e32a62128a319c3ebf4061",
+      "kind": "mcts_value_network",
+      "training_seed": 24000000,
+      "architecture": {
+        "input_features": 87,
+        "hidden_units": 32,
+        "policy_labels": 16
+      },
+      "recorded_cycle_accepted": true,
+      "serving_ready": false,
+      "current_engine_compatible": false,
+      "historical_architecture_commit": "5363fc1",
+      "board_rule_version": "random_start_balanced_board_random_ports_friendly_robber"
+    },
+    {
+      "path": "neural/history/value_network_1782817238_25000000.json",
+      "source_path": "data/training/checkpoints/value_network_1782817238_25000000.json",
+      "bytes": 108877,
+      "sha256": "89e49c4af435a5dbf3f3c50b7d31a94723d9128d2426ff8db8ca04d98cde07b6",
+      "kind": "mcts_value_network",
+      "training_seed": 25000000,
+      "architecture": {
+        "input_features": 87,
+        "hidden_units": 32,
+        "policy_labels": 16
+      },
+      "recorded_cycle_accepted": true,
+      "serving_ready": false,
+      "current_engine_compatible": false,
+      "historical_architecture_commit": "5363fc1",
+      "board_rule_version": "random_start_balanced_board_random_ports_friendly_robber"
+    },
+    {
+      "path": "neural/history/value_network_1782819128_28000000.json",
+      "source_path": "data/training/checkpoints/value_network_1782819128_28000000.json",
+      "bytes": 108902,
+      "sha256": "374b3b7f27e03e34d20a91671c5867cc83d1d18e501c87e840a76e7522b1d060",
+      "kind": "mcts_value_network",
+      "training_seed": 28000000,
+      "architecture": {
+        "input_features": 87,
+        "hidden_units": 32,
+        "policy_labels": 16
+      },
+      "recorded_cycle_accepted": true,
+      "serving_ready": false,
+      "current_engine_compatible": false,
+      "historical_architecture_commit": "5363fc1",
+      "board_rule_version": "random_start_balanced_board_random_ports_friendly_robber"
+    },
+    {
+      "path": "neural/history/value_network_1782830025_4000000.json",
+      "source_path": "data/training/checkpoints/value_network_1782830025_4000000.json",
+      "bytes": 659739,
+      "sha256": "ef44262d403ba7076963ab2af1cf5460d2e4c0f96cdf20f8595cd21b1fed425b",
+      "kind": "mcts_value_network",
+      "training_seed": 4000000,
+      "architecture": {
+        "input_features": 87,
+        "hidden_units": 32,
+        "policy_labels": 522
+      },
+      "recorded_cycle_accepted": true,
+      "serving_ready": false,
+      "current_engine_compatible": false,
+      "historical_architecture_commit": "44a79cb",
+      "board_rule_version": "random_start_balanced_board_random_ports_friendly_robber_exact_policy_v1"
+    },
+    {
+      "path": "neural/history/value_network_1782835313_6000000.json",
+      "source_path": "data/training/checkpoints/value_network_1782835313_6000000.json",
+      "bytes": 656754,
+      "sha256": "fd8a46f1c22c2087f5259cf0b973b243dfbb801226ae74d13d4829477bfcc6eb",
+      "kind": "mcts_value_network",
+      "training_seed": 6000000,
+      "architecture": {
+        "input_features": 87,
+        "hidden_units": 32,
+        "policy_labels": 522
+      },
+      "recorded_cycle_accepted": true,
+      "serving_ready": false,
+      "current_engine_compatible": false,
+      "historical_architecture_commit": "44a79cb",
+      "board_rule_version": "random_start_balanced_board_random_ports_friendly_robber_exact_policy_v1"
+    }
+  ]
+}
