@@ -73,6 +73,8 @@ export default function PlayerPanel({ state, playerId, targetVp, byType = {}, on
           <span className="vp-badge">{vp}/{targetVp} VP</span>
         </div>
 
+        <p className="bot-model-note">Web version: heuristic MCTS only. No neural network.</p>
+
         <div className="badges">
           {state.longest_road_owner === playerId && <span className="badge">Longest Road</span>}
           {state.largest_army_owner === playerId && <span className="badge">Largest Army ({player.played_knights})</span>}
